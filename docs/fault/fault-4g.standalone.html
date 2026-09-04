@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fault Agent — 4G · data model &amp; flow</title><style>:root{--bg:#fbfaf7;--card:#fff;--ink:#1c1a17;--muted:#6b655c;--line:#e7e2d8;--accent:#c2410c;--accent-soft:#fde7d3;--code-bg:#f4f1ea;--th:#f6f2ea}
+@media (prefers-color-scheme:dark){:root{--bg:#14130f;--card:#1c1a16;--ink:#ece7de;--muted:#a49c8d;--line:#2c2822;--accent:#f59e0b;--accent-soft:#3a2a12;--code-bg:#221f19;--th:#221f19}}
+:root[data-theme=light]{--bg:#fbfaf7;--card:#fff;--ink:#1c1a17;--muted:#6b655c;--line:#e7e2d8;--accent:#c2410c;--accent-soft:#fde7d3;--code-bg:#f4f1ea;--th:#f6f2ea}
+:root[data-theme=dark]{--bg:#14130f;--card:#1c1a16;--ink:#ece7de;--muted:#a49c8d;--line:#2c2822;--accent:#f59e0b;--accent-soft:#3a2a12;--code-bg:#221f19;--th:#221f19}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+h1,h2,h3{line-height:1.25;text-wrap:balance}
+h1{font-size:2rem;margin:.2em 0 .1em;letter-spacing:-.01em}
+h2{font-size:1.4rem;margin:2.2em 0 .5em;padding-top:.6em;border-top:1px solid var(--line)}
+h3{font-size:1.1rem;margin:1.6em 0 .4em;color:var(--accent)}
+a{color:var(--accent)}
+blockquote{margin:1.2em 0;padding:.6em 1.1em;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 8px 8px 0}
+blockquote p{margin:.3em 0}
+code{font:.86em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code-bg);padding:.12em .4em;border-radius:5px}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow-x:auto;border:1px solid var(--line)}
+pre code{background:none;padding:0}
+hr{border:none;border-top:1px solid var(--line);margin:2em 0}
+table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.9rem;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--th);font-weight:600}
+tr:nth-child(even) td{background:color-mix(in srgb,var(--card) 60%,var(--bg))}
+figure.diagram{margin:1.4em 0;padding:22px;background:var(--card);border:1px solid var(--line);border-radius:14px}
+.eyebrow{font:600 .72rem/1 ui-monospace,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
+</style></head><body><main class="wrap"><div class="eyebrow">NS-QAW · Hinode SiteCert · Fault</div>
+<h1 id="fault-agent-4g-data-model-flow-real-client-data">Fault Agent — 4G · data model &amp; flow (real client data)</h1>
+<blockquote>
+<p><strong>Status:</strong> design / reference only. Documents the <strong>data model</strong> and <strong>logical flow</strong> for the 4G fault
+check, from the real client files. The files are the <strong>schema reference</strong> — no ingestion/insert here.</p>
+<p><strong>Scope:</strong> 4G only. <strong>Depends on Intake</strong> (uses the on-air site's cells / <code>Cell Name</code> from the ECGI file).</p>
+</blockquote>
+<hr />
+<h2 id="1-the-idea">1. The idea</h2>
+<p>The fault agent asks, for each new on-air 4G site: <strong>are there active alarms, and is any of them a blocker?</strong>
+It needs two inputs plus the site's cells from intake:</p>
+<table>
+<thead>
+<tr>
+<th>Reference file</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>F1 · Alarm Vs KPI Impact</strong> (<code>Alarm Vs KPI Impact_9-Apr-26.xlsx</code>, sheet <code>Data</code>)</td>
+<td><strong>Ground truth</strong> — the catalogue of alarms: code, technology, severity, KPI impact, and <strong>whether the alarm blocks progress</strong></td>
+</tr>
+<tr>
+<td><strong>F2 · alarm-monitoring.csv</strong> (<code>01.alarm-monitoring.csv</code>)</td>
+<td><strong>Live feed</strong> — the actual alarms firing right now → <code>ran.alarm_monitoring_raw</code></td>
+</tr>
+<tr>
+<td><strong>F3 · Alarm_Equipment_Type.xlsx</strong> (<code>Equipment Type</code> · <code>Tech</code> · <code>Node Level</code>)</td>
+<td><strong>Node-level reference</strong> — maps <strong>Equipment Type + Tech → <code>site</code> | <code>cell</code></strong>, i.e. decides <em>how</em> an alarm is matched → <code>ran.alarm_node_level</code></td>
+</tr>
+</tbody>
+</table>
+<p>The site's <strong>cells (<code>Cell Name</code>) and eNB IDs (<code>enodebid</code>)</strong> come from the <strong>Intake on-air Gold set</strong> (<code>ran.site_db</code> rows whose <code>site_id</code> is in <code>ran.intake_site</code>) — that's how a live alarm is tied to a site.</p>
+<blockquote>
+<p>There is also a third file, <strong><code>alarm-library-flagged progress blocked.xlsx</code></strong> — a broader alarm catalogue
+(33 cols) that <em>also</em> carries a <code>Flag - Block progress</code> column. Not part of your two-file description; see
+open questions (is it the authoritative library, or does F1 win?).</p>
+</blockquote>
+<hr />
+<h2 id="2-the-flow">2. The flow</h2>
+<figure class="diagram"><svg id="my-svg" width="100%" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="flowchart" style="max-width: 1564.01px; background-color: transparent;" viewBox="0 0 1564.0078125 2633" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#my-svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;fill:#333;}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#my-svg .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#my-svg .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#my-svg .error-icon{fill:#552222;}#my-svg .error-text{fill:#552222;stroke:#552222;}#my-svg .edge-thickness-normal{stroke-width:1px;}#my-svg .edge-thickness-thick{stroke-width:3.5px;}#my-svg .edge-pattern-solid{stroke-dasharray:0;}#my-svg .edge-thickness-invisible{stroke-width:0;fill:none;}#my-svg .edge-pattern-dashed{stroke-dasharray:3;}#my-svg .edge-pattern-dotted{stroke-dasharray:2;}#my-svg .marker{fill:#333333;stroke:#333333;}#my-svg .marker.cross{stroke:#333333;}#my-svg svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;}#my-svg p{margin:0;}#my-svg .label{font-family:"trebuchet ms",verdana,arial,sans-serif;color:#333;}#my-svg .cluster-label text{fill:#333;}#my-svg .cluster-label span{color:#333;}#my-svg .cluster-label span p{background-color:transparent;}#my-svg .label text,#my-svg span{fill:#333;color:#333;}#my-svg .node rect,#my-svg .node circle,#my-svg .node ellipse,#my-svg .node polygon,#my-svg .node path{fill:#ECECFF;stroke:#9370DB;stroke-width:1px;}#my-svg .rough-node .label text,#my-svg .node .label text,#my-svg .image-shape .label,#my-svg .icon-shape .label{text-anchor:middle;}#my-svg .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#my-svg .rough-node .label,#my-svg .node .label,#my-svg .image-shape .label,#my-svg .icon-shape .label{text-align:center;}#my-svg .node.clickable{cursor:pointer;}#my-svg .root .anchor path{fill:#333333!important;stroke-width:0;stroke:#333333;}#my-svg .arrowheadPath{fill:#333333;}#my-svg .edgePath .path{stroke:#333333;stroke-width:1px;}#my-svg .flowchart-link{stroke:#333333;fill:none;}#my-svg .edgeLabel{background-color:rgba(232,232,232, 0.8);text-align:center;}#my-svg .edgeLabel p{background-color:rgba(232,232,232, 0.8);}#my-svg .edgeLabel rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#my-svg .labelBkg{background-color:rgba(232, 232, 232, 0.5);}#my-svg .cluster rect{fill:#ffffde;stroke:#aaaa33;stroke-width:1px;}#my-svg .cluster text{fill:#333;}#my-svg .cluster span{color:#333;}#my-svg div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:12px;background:hsl(80, 100%, 96.2745098039%);border:1px solid #aaaa33;border-radius:2px;pointer-events:none;z-index:100;}#my-svg .flowchartTitleText{text-anchor:middle;font-size:18px;fill:#333;}#my-svg rect.text{fill:none;stroke-width:0;}#my-svg .icon-shape,#my-svg .image-shape{background-color:rgba(232,232,232, 0.8);text-align:center;}#my-svg .icon-shape p,#my-svg .image-shape p{background-color:rgba(232,232,232, 0.8);padding:2px;}#my-svg .icon-shape .label rect,#my-svg .image-shape .label rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#my-svg .label-icon{display:inline-block;height:1em;overflow:visible;vertical-align:-0.125em;}#my-svg .node .label-icon path{fill:currentColor;stroke:revert;stroke-width:revert;}#my-svg .node .neo-node{stroke:#9370DB;}#my-svg [data-look="neo"].node rect,#my-svg [data-look="neo"].cluster rect,#my-svg [data-look="neo"].node polygon{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg [data-look="neo"].swimlane.cluster rect{filter:none;}#my-svg [data-look="neo"].node path{stroke:#9370DB;stroke-width:1px;}#my-svg [data-look="neo"].node .outer-path{filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg [data-look="neo"].node .neo-line path{stroke:#9370DB;filter:none;}#my-svg [data-look="neo"].node circle{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg [data-look="neo"].node circle .state-start{fill:#000000;}#my-svg [data-look="neo"].icon-shape .icon{fill:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg [data-look="neo"].icon-shape .icon-neo path{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg :root{--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif;}#my-svg .gt&gt;*{fill:rgb(58, 42, 18)!important;stroke:rgb(245, 158, 11)!important;color:rgb(255, 237, 213)!important;font-size:13px!important;}#my-svg .gt span{fill:rgb(58, 42, 18)!important;stroke:rgb(245, 158, 11)!important;color:rgb(255, 237, 213)!important;font-size:13px!important;}#my-svg .gt tspan{fill:rgb(255, 237, 213)!important;}#my-svg .nl&gt;*{fill:rgb(42, 26, 58)!important;stroke:rgb(192, 132, 252)!important;color:rgb(243, 232, 255)!important;font-size:13px!important;}#my-svg .nl span{fill:rgb(42, 26, 58)!important;stroke:rgb(192, 132, 252)!important;color:rgb(243, 232, 255)!important;font-size:13px!important;}#my-svg .nl tspan{fill:rgb(243, 232, 255)!important;}#my-svg .live&gt;*{fill:rgb(15, 43, 37)!important;stroke:rgb(45, 212, 191)!important;color:rgb(204, 251, 241)!important;font-size:13px!important;}#my-svg .live span{fill:rgb(15, 43, 37)!important;stroke:rgb(45, 212, 191)!important;color:rgb(204, 251, 241)!important;font-size:13px!important;}#my-svg .live tspan{fill:rgb(204, 251, 241)!important;}#my-svg .intake&gt;*{fill:rgb(30, 41, 59)!important;stroke:rgb(148, 163, 184)!important;color:rgb(226, 232, 240)!important;font-size:13px!important;}#my-svg .intake span{fill:rgb(30, 41, 59)!important;stroke:rgb(148, 163, 184)!important;color:rgb(226, 232, 240)!important;font-size:13px!important;}#my-svg .intake tspan{fill:rgb(226, 232, 240)!important;}#my-svg .step&gt;*{fill:rgb(30, 41, 59)!important;stroke:rgb(148, 163, 184)!important;color:rgb(226, 232, 240)!important;font-size:13px!important;}#my-svg .step span{fill:rgb(30, 41, 59)!important;stroke:rgb(148, 163, 184)!important;color:rgb(226, 232, 240)!important;font-size:13px!important;}#my-svg .step tspan{fill:rgb(226, 232, 240)!important;}#my-svg .raw&gt;*{fill:rgb(15, 31, 43)!important;stroke:rgb(56, 189, 248)!important;color:rgb(224, 242, 254)!important;font-size:13px!important;}#my-svg .raw span{fill:rgb(15, 31, 43)!important;stroke:rgb(56, 189, 248)!important;color:rgb(224, 242, 254)!important;font-size:13px!important;}#my-svg .raw tspan{fill:rgb(224, 242, 254)!important;}#my-svg .block&gt;*{fill:rgb(58, 18, 18)!important;stroke:rgb(248, 113, 113)!important;color:rgb(254, 202, 202)!important;font-size:13px!important;}#my-svg .block span{fill:rgb(58, 18, 18)!important;stroke:rgb(248, 113, 113)!important;color:rgb(254, 202, 202)!important;font-size:13px!important;}#my-svg .block tspan{fill:rgb(254, 202, 202)!important;}#my-svg .ok&gt;*{fill:rgb(15, 43, 18)!important;stroke:rgb(74, 222, 128)!important;color:rgb(220, 252, 231)!important;font-size:13px!important;}#my-svg .ok span{fill:rgb(15, 43, 18)!important;stroke:rgb(74, 222, 128)!important;color:rgb(220, 252, 231)!important;font-size:13px!important;}#my-svg .ok tspan{fill:rgb(220, 252, 231)!important;}#my-svg .hold&gt;*{fill:rgb(42, 42, 42)!important;stroke:rgb(156, 163, 175)!important;color:rgb(209, 213, 219)!important;font-size:13px!important;stroke-dasharray:4,3!important;}#my-svg .hold span{fill:rgb(42, 42, 42)!important;stroke:rgb(156, 163, 175)!important;color:rgb(209, 213, 219)!important;font-size:13px!important;stroke-dasharray:4,3!important;}#my-svg .hold tspan{fill:rgb(209, 213, 219)!important;}</style><g><marker id="my-svg_flowchart-v2-pointEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-pointStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-pointEnd-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="11.5" refY="7" markerUnits="userSpaceOnUse" markerWidth="10.5" markerHeight="14" orient="auto"><path d="M 0 0 L 11.5 7 L 0 14 z" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-pointStart-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="1" refY="7" markerUnits="userSpaceOnUse" markerWidth="11.5" markerHeight="14" orient="auto"><polygon points="0,7 11.5,14 11.5,0" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-circleEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-circleStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-circleEnd-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refY="5" refX="12.25" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-circleStart-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-2" refY="5" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-crossEnd" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-crossStart" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-crossEnd-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="17.7" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5;"/></marker><marker id="my-svg_flowchart-v2-crossStart-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="-3.5" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5; stroke-dasharray: 1, 0;"/></marker><g class="root"><g class="clusters"><g class="cluster" id="my-svg-IN" data-look="classic"><rect style="" x="102.6796875" y="712" width="470.59375" height="376"/><g class="cluster-label" transform="translate(106.6796875, 712)"><foreignObject width="462.59375" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>From INTAKE (on-air Gold: site_db WHERE site_id IN intake_site)</p></span></div></foreignObject></g></g></g><g class="edgePaths"><path d="M1092.444,991.073L1079.686,1007.228C1066.928,1023.382,1041.411,1055.691,1028.653,1078.012C1015.895,1100.333,1015.895,1112.667,968.28,1131.519C920.665,1150.372,825.435,1175.744,777.82,1188.43L730.205,1201.116" id="my-svg-L_LVL_CELL_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_LVL_CELL_0" data-points="W3sieCI6MTA5Mi40NDQzMDE4NTc5MTk4LCJ5Ijo5OTEuMDczMjA4MTA3OTE5OX0seyJ4IjoxMDE1Ljg5NDUzMTI1LCJ5IjoxMDg4fSx7IngiOjEwMTUuODk0NTMxMjUsInkiOjExMjV9LHsieCI6NzI2LjMzOTg0Mzc1LCJ5IjoxMjAyLjE0NjIyMjIzODk2NjJ9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M243.398,934.5L243.398,960.083C243.398,985.667,243.398,1036.833,243.398,1068.583C243.398,1100.333,243.398,1112.667,281.523,1130.609C319.647,1148.551,395.895,1172.102,434.019,1183.877L472.143,1195.653" id="my-svg-L_Ia_CELL_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_Ia_CELL_0" data-points="W3sieCI6MjQzLjM5ODQzNzUsInkiOjkzNC41fSx7IngiOjI0My4zOTg0Mzc1LCJ5IjoxMDg4fSx7IngiOjI0My4zOTg0Mzc1LCJ5IjoxMTI1fSx7IngiOjQ3NS45NjQ4NDM3NSwieSI6MTE5Ni44MzMxNDQwNzM4MTExfV0=" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M1150.638,1049.267L1150.044,1055.722C1149.45,1062.178,1148.262,1075.089,1147.668,1087.711C1147.074,1100.333,1147.074,1112.667,1129.224,1127.027C1111.375,1141.387,1075.675,1157.773,1057.825,1165.966L1039.975,1174.16" id="my-svg-L_LVL_SITE_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_LVL_SITE_0" data-points="W3sieCI6MTE1MC42Mzc4NTY4MjE3NzEsInkiOjEwNDkuMjY2NzYzMDcxNzcxfSx7IngiOjExNDcuMDc0MjE4NzUsInkiOjEwODh9LHsieCI6MTE0Ny4wNzQyMTg3NSwieSI6MTEyNX0seyJ4IjoxMDM2LjMzOTg0Mzc1LCJ5IjoxMTc1LjgyODQyMjE0NTc3OH1d" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M432.547,934.5L432.547,960.083C432.547,985.667,432.547,1036.833,432.547,1068.583C432.547,1100.333,432.547,1112.667,489.196,1132.045C545.846,1151.424,659.145,1177.848,715.795,1191.06L772.444,1204.272" id="my-svg-L_Ienb_SITE_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_Ienb_SITE_0" data-points="W3sieCI6NDMyLjU0Njg3NSwieSI6OTM0LjV9LHsieCI6NDMyLjU0Njg3NSwieSI6MTA4OH0seyJ4Ijo0MzIuNTQ2ODc1LCJ5IjoxMTI1fSx7IngiOjc3Ni4zMzk4NDM3NSwieSI6MTIwNS4xODA4NTAxODY3NDF9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M1248.611,978.761L1268.084,996.967C1287.557,1015.174,1326.503,1051.587,1345.976,1075.96C1365.449,1100.333,1365.449,1112.667,1365.449,1127.583C1365.449,1142.5,1365.449,1160,1365.449,1168.75L1365.449,1177.5" id="my-svg-L_LVL_HOLD_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_LVL_HOLD_0" data-points="W3sieCI6MTI0OC42MTA1NjIwNDQ0NDYsInkiOjk3OC43NjA1MzE3MDU1NTR9LHsieCI6MTM2NS40NDkyMTg3NSwieSI6MTA4OH0seyJ4IjoxMzY1LjQ0OTIxODc1LCJ5IjoxMTI1fSx7IngiOjEzNjUuNDQ5MjE4NzUsInkiOjExODEuNX1d" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M906.34,1309L906.34,1313.167C906.34,1317.333,906.34,1325.667,884.091,1372.243C861.843,1418.819,817.346,1503.639,795.098,1546.048L772.849,1588.458" id="my-svg-L_SITE_RAW_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_SITE_RAW_0" data-points="W3sieCI6OTA2LjMzOTg0Mzc1LCJ5IjoxMzA5fSx7IngiOjkwNi4zMzk4NDM3NSwieSI6MTMzNH0seyJ4Ijo3NzAuOTkxMjA4NTE0MjY4LCJ5IjoxNTkyfV0=" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M601.152,1279.75L601.152,1288.792C601.152,1297.833,601.152,1315.917,621.721,1367.359C642.29,1418.8,683.428,1503.601,703.996,1546.001L724.565,1588.401" id="my-svg-L_CELL_RAW_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_CELL_RAW_0" data-points="W3sieCI6NjAxLjE1MjM0Mzc1LCJ5IjoxMjc5Ljc1fSx7IngiOjYwMS4xNTIzNDM3NSwieSI6MTMzNH0seyJ4Ijo3MjYuMzExMTUyNjgzMDAyNCwieSI6MTU5Mn1d" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M747.777,1680.5L747.777,1723.5C747.777,1766.5,747.777,1852.5,730.534,1901.952C713.29,1951.403,678.804,1964.306,661.56,1970.758L644.317,1977.209" id="my-svg-L_RAW_S2_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_RAW_S2_0" data-points="W3sieCI6NzQ3Ljc3NzM0Mzc1LCJ5IjoxNjgwLjV9LHsieCI6NzQ3Ljc3NzM0Mzc1LCJ5IjoxOTM4LjV9LHsieCI6NjQwLjU3MDMxMjUsInkiOjE5NzguNjExMDUzOTMxNjU5Mn1d" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M510.57,2091L510.57,2095.167C510.57,2099.333,510.57,2107.667,510.57,2115.333C510.57,2123,510.57,2130,510.57,2133.5L510.57,2137" id="my-svg-L_S2_DEC_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_S2_DEC_0" data-points="W3sieCI6NTEwLjU3MDMxMjUsInkiOjIwOTF9LHsieCI6NTEwLjU3MDMxMjUsInkiOjIxMTZ9LHsieCI6NTEwLjU3MDMxMjUsInkiOjIxNDF9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M446.524,2378.954L434.12,2395.795C421.715,2412.636,396.906,2446.318,384.502,2468.659C372.098,2491,372.098,2502,372.098,2507.5L372.098,2513" id="my-svg-L_DEC_BLOCK_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_DEC_BLOCK_0" data-points="W3sieCI6NDQ2LjUyMzk5NTkyOTY1MTcsInkiOjIzNzguOTUzNjgzNDI5NjUyfSx7IngiOjM3Mi4wOTc2NTYyNSwieSI6MjQ4MH0seyJ4IjozNzIuMDk3NjU2MjUsInkiOjI1MTd9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M574.617,2378.954L587.021,2395.795C599.425,2412.636,624.234,2446.318,636.639,2470.284C649.043,2494.25,649.043,2508.5,649.043,2515.625L649.043,2522.75" id="my-svg-L_DEC_SHOW_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_DEC_SHOW_0" data-points="W3sieCI6NTc0LjYxNjYyOTA3MDM0ODMsInkiOjIzNzguOTUzNjgzNDI5NjUyfSx7IngiOjY0OS4wNDI5Njg3NSwieSI6MjQ4MH0seyJ4Ijo2NDkuMDQyOTY4NzUsInkiOjI1MjYuNzV9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M569.383,662L567.34,666.167C565.297,670.333,561.211,678.667,559.168,687C557.125,695.333,557.125,703.667,630.529,730.559C703.933,757.451,850.742,802.902,924.146,825.628L997.55,848.353" id="my-svg-L_Ltype_LVL_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_Ltype_LVL_0" data-points="W3sieCI6NTY5LjM4MzA3ODgzNTIyNzMsInkiOjY2Mn0seyJ4Ijo1NTcuMTI1LCJ5Ijo2ODd9LHsieCI6NTU3LjEyNSwieSI6NzEyfSx7IngiOjEwMDEuMzcxMDkzNzUsInkiOjg0OS41MzYxMTAxMjgzMzN9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M604.739,662L603.146,666.167C601.554,670.333,598.369,678.667,596.776,687C595.184,695.333,595.184,703.667,595.184,739.167C595.184,774.667,595.184,837.333,595.184,900C595.184,962.667,595.184,1025.333,595.184,1062.833C595.184,1100.333,595.184,1112.667,595.744,1129.209C596.305,1145.752,597.425,1166.504,597.986,1176.88L598.546,1187.256" id="my-svg-L_La_CELL_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_La_CELL_0" data-points="W3sieCI6NjA0LjczODY0NzQ2MDkzNzUsInkiOjY2Mn0seyJ4Ijo1OTUuMTgzNTkzNzUsInkiOjY4N30seyJ4Ijo1OTUuMTgzNTkzNzUsInkiOjcxMn0seyJ4Ijo1OTUuMTgzNTkzNzUsInkiOjkwMH0seyJ4Ijo1OTUuMTgzNTkzNzUsInkiOjEwODh9LHsieCI6NTk1LjE4MzU5Mzc1LCJ5IjoxMTI1fSx7IngiOjU5OC43NjIxNDI5NTgxNDQ4LCJ5IjoxMTkxLjI1fV0=" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M888.251,662L890.271,666.167C892.291,670.333,896.331,678.667,898.351,687C900.371,695.333,900.371,703.667,900.371,739.167C900.371,774.667,900.371,837.333,900.371,900C900.371,962.667,900.371,1025.333,900.371,1062.833C900.371,1100.333,900.371,1112.667,900.668,1124.334C900.965,1136.002,901.56,1147.004,901.857,1152.505L902.154,1158.006" id="my-svg-L_Lsub_SITE_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_Lsub_SITE_0" data-points="W3sieCI6ODg4LjI1MDg5ODg4MTM5MiwieSI6NjYyfSx7IngiOjkwMC4zNzEwOTM3NSwieSI6Njg3fSx7IngiOjkwMC4zNzEwOTM3NSwieSI6NzEyfSx7IngiOjkwMC4zNzEwOTM3NSwieSI6OTAwfSx7IngiOjkwMC4zNzEwOTM3NSwieSI6MTA4OH0seyJ4Ijo5MDAuMzcxMDkzNzUsInkiOjExMjV9LHsieCI6OTAyLjM2OTY3OTcyMjg1MDcsInkiOjExNjJ9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M1239.676,464L1225.459,501.167C1211.241,538.333,1182.806,612.667,1168.589,654C1154.371,695.333,1154.371,703.667,1154.557,711.334C1154.744,719.002,1155.116,726.004,1155.302,729.505L1155.488,733.006" id="my-svg-L_NLk_LVL_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_NLk_LVL_0" data-points="W3sieCI6MTIzOS42NzY0MTM3OTYxNjQ4LCJ5Ijo0NjR9LHsieCI6MTE1NC4zNzEwOTM3NSwieSI6Njg3fSx7IngiOjExNTQuMzcxMDkzNzUsInkiOjcxMn0seyJ4IjoxMTU1LjcwMDg4MDk4NDA0MjQsInkiOjczN31d" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M1289.023,464L1289.023,501.167C1289.023,538.333,1289.023,612.667,1289.023,654C1289.023,695.333,1289.023,703.667,1286.629,711.444C1284.235,719.222,1279.446,726.444,1277.052,730.055L1274.658,733.666" id="my-svg-L_NLv_LVL_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_NLv_LVL_0" data-points="W3sieCI6MTI4OS4wMjM0Mzc1LCJ5Ijo0NjR9LHsieCI6MTI4OS4wMjM0Mzc1LCJ5Ijo2ODd9LHsieCI6MTI4OS4wMjM0Mzc1LCJ5Ijo3MTJ9LHsieCI6MTI3Mi40NDczMjc5NTg3NzY3LCJ5Ijo3Mzd9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M283.047,1913.5L283.047,1917.667C283.047,1921.833,283.047,1930.167,298.68,1940.431C314.313,1950.696,345.578,1962.892,361.211,1968.989L376.844,1975.087" id="my-svg-L_GTa_S2_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_GTa_S2_0" data-points="W3sieCI6MjgzLjA0Njg3NSwieSI6MTkxMy41fSx7IngiOjI4My4wNDY4NzUsInkiOjE5MzguNX0seyJ4IjozODAuNTcwMzEyNSwieSI6MTk3Ni41NDA5Mzg0MzM1NDA1fV0=" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/></g><g class="edgeLabels"><g class="edgeLabel" transform="translate(1015.89453125, 1125)"><g class="label" data-id="L_LVL_CELL_0" transform="translate(-13.046875, -12)"><foreignObject width="26.09375" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>cell</p></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_Ia_CELL_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1147.07421875, 1125)"><g class="label" data-id="L_LVL_SITE_0" transform="translate(-13.0546875, -12)"><foreignObject width="26.109375" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>site</p></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_Ienb_SITE_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(1365.44921875, 1125)"><g class="label" data-id="L_LVL_HOLD_0" transform="translate(-93.6953125, -12)"><foreignObject width="187.390625" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>IDSC_COMBO / Femto Cell</p></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_SITE_RAW_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_CELL_RAW_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_RAW_S2_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_S2_DEC_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(372.09765625, 2480)"><g class="label" data-id="L_DEC_BLOCK_0" transform="translate(-12.6953125, -12)"><foreignObject width="25.390625" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>YES</p></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(649.04296875, 2480)"><g class="label" data-id="L_DEC_SHOW_0" transform="translate(-10.5, -12)"><foreignObject width="21" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>NO</p></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_Ltype_LVL_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_La_CELL_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_Lsub_SITE_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_NLk_LVL_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_NLv_LVL_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_GTa_S2_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g></g><g class="nodes"><g class="root" transform="translate(505.59375, 0)"><g class="clusters"><g class="cluster" id="my-svg-LIVE" data-look="classic"><rect style="" x="-18.1953125" y="8" width="484.640625" height="654"/><g class="cluster-label" transform="translate(-14.1953125, 8)"><foreignObject width="476.640625" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>FILE 2  —  alarm-monitoring.csv  (LIVE alarms from the fault system)</p></span></div></foreignObject></g></g></g><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="node default live" id="my-svg-flowchart-Ltype-6" data-look="classic" transform="translate(224.125, 87.25)"><rect class="basic label-container" style="fill:#0f2b25 !important;stroke:#2dd4bf !important" x="-115.84375" y="-44.25" width="231.6875" height="88.5"/><g class="label" style="color:#ccfbf1 !important;font-size:13px !important" transform="translate(-85.84375, -29.25)"><rect/><foreignObject width="171.6875" height="58.5"><div style="color: rgb(204, 251, 241) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ccfbf1 !important;font-size:13px !important" class="nodeLabel"><p>LEVEL LOOKUP KEY<br />Equipment Type + Technology<br />(LTE = 4G, NR = 5G)</p></span></div></foreignObject></g></g><g class="node default live" id="my-svg-flowchart-La-7" data-look="classic" transform="translate(224.125, 216)"><rect class="basic label-container" style="fill:#0f2b25 !important;stroke:#2dd4bf !important" x="-78.2890625" y="-34.5" width="156.578125" height="69"/><g class="label" style="color:#ccfbf1 !important;font-size:13px !important" transform="translate(-48.2890625, -19.5)"><rect/><foreignObject width="96.578125" height="39"><div style="color: rgb(204, 251, 241) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ccfbf1 !important;font-size:13px !important" class="nodeLabel"><p>CELL MATCH KEY<br />Equipment ID</p></span></div></foreignObject></g></g><g class="node default live" id="my-svg-flowchart-Lsub-8" data-look="classic" transform="translate(224.125, 344.75)"><rect class="basic label-container" style="fill:#0f2b25 !important;stroke:#2dd4bf !important" x="-178.625" y="-44.25" width="357.25" height="88.5"/><g class="label" style="color:#ccfbf1 !important;font-size:13px !important" transform="translate(-148.625, -29.25)"><rect/><foreignObject width="297.25" height="58.5"><div style="color: rgb(204, 251, 241) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ccfbf1 !important;font-size:13px !important" class="nodeLabel"><p>SITE MATCH KEY<br />Equipment Sub ID<br />/ENB[id/enbid=280182]/DU[...]/RIU[...]/Radio[...]</p></span></div></foreignObject></g></g><g class="node default live" id="my-svg-flowchart-Lb-9" data-look="classic" transform="translate(224.125, 463.75)"><rect class="basic label-container" style="fill:#0f2b25 !important;stroke:#2dd4bf !important" x="-63.59375" y="-24.75" width="127.1875" height="49.5"/><g class="label" style="color:#ccfbf1 !important;font-size:13px !important" transform="translate(-33.59375, -9.75)"><rect/><foreignObject width="67.1875" height="19.5"><div style="color: rgb(204, 251, 241) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ccfbf1 !important;font-size:13px !important" class="nodeLabel"><p>Alarm Code</p></span></div></foreignObject></g></g><g class="node default live" id="my-svg-flowchart-Ld-10" data-look="classic" transform="translate(224.125, 582.75)"><rect class="basic label-container" style="fill:#0f2b25 !important;stroke:#2dd4bf !important" x="-126.078125" y="-44.25" width="252.15625" height="88.5"/><g class="label" style="color:#ccfbf1 !important;font-size:13px !important" transform="translate(-96.078125, -29.25)"><rect/><foreignObject width="192.15625" height="58.5"><div style="color: rgb(204, 251, 241) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ccfbf1 !important;font-size:13px !important" class="nodeLabel"><p>INFO<br />Perceived Severity, Status,<br />Event Time, Service Affected, ...</p></span></div></foreignObject></g></g></g></g><g class="root" transform="translate(1146.59375, 198)"><g class="clusters"><g class="cluster" id="my-svg-NL" data-look="classic"><rect style="" x="-124.5546875" y="8" width="533.96875" height="258"/><g class="cluster-label" transform="translate(-120.5546875, 8)"><foreignObject width="525.96875" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>REF FILE  —  Alarm_Equipment_Type.xlsx  (stored as ran.alarm_node_level)</p></span></div></foreignObject></g></g></g><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="node default nl" id="my-svg-flowchart-NLk-4" data-look="classic" transform="translate(142.4296875, 77.5)"><rect class="basic label-container" style="fill:#2a1a3a !important;stroke:#c084fc !important" x="-96.9296875" y="-34.5" width="193.859375" height="69"/><g class="label" style="color:#f3e8ff !important;font-size:13px !important" transform="translate(-66.9296875, -19.5)"><rect/><foreignObject width="133.859375" height="39"><div style="color: rgb(243, 232, 255) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#f3e8ff !important;font-size:13px !important" class="nodeLabel"><p>LOOKUP KEY<br />Equipment Type + Tech</p></span></div></foreignObject></g></g><g class="node default nl" id="my-svg-flowchart-NLv-5" data-look="classic" transform="translate(142.4296875, 196.5)"><rect class="basic label-container" style="fill:#2a1a3a !important;stroke:#c084fc !important" x="-65.3203125" y="-34.5" width="130.640625" height="69"/><g class="label" style="color:#f3e8ff !important;font-size:13px !important" transform="translate(-35.3203125, -19.5)"><rect/><foreignObject width="70.640625" height="39"><div style="color: rgb(243, 232, 255) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#f3e8ff !important;font-size:13px !important" class="nodeLabel"><p>NODE LEVEL<br />site | cell</p></span></div></foreignObject></g></g></g></g><g class="root" transform="translate(107.546875, 1351)"><g class="clusters"><g class="cluster" id="my-svg-GT" data-look="classic"><rect style="" x="-99.546875" y="8" width="550.09375" height="554.5"/><g class="cluster-label" transform="translate(-95.546875, 8)"><foreignObject width="542.09375" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>FILE 1  —  Alarm Vs KPI Impact  (GROUND TRUTH, stored as ran.alarm_vs_kpi)</p></span></div></foreignObject></g></g></g><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="node default gt" id="my-svg-flowchart-GTa-0" data-look="classic" transform="translate(175.5, 77.5)"><rect class="basic label-container" style="fill:#3a2a12 !important;stroke:#f59e0b !important" x="-66.40625" y="-34.5" width="132.8125" height="69"/><g class="label" style="color:#ffedd5 !important;font-size:13px !important" transform="translate(-36.40625, -19.5)"><rect/><foreignObject width="72.8125" height="39"><div style="color: rgb(255, 237, 213) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ffedd5 !important;font-size:13px !important" class="nodeLabel"><p>LOOKUP KEY<br />Alarm Code</p></span></div></foreignObject></g></g><g class="node default gt" id="my-svg-flowchart-GTb-1" data-look="classic" transform="translate(175.5, 196.5)"><rect class="basic label-container" style="fill:#3a2a12 !important;stroke:#f59e0b !important" x="-76.734375" y="-34.5" width="153.46875" height="69"/><g class="label" style="color:#ffedd5 !important;font-size:13px !important" transform="translate(-46.734375, -19.5)"><rect/><foreignObject width="93.46875" height="39"><div style="color: rgb(255, 237, 213) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ffedd5 !important;font-size:13px !important" class="nodeLabel"><p>FILTER<br />Technology (4G)</p></span></div></foreignObject></g></g><g class="node default gt" id="my-svg-flowchart-GTc-2" data-look="classic" transform="translate(175.5, 325.25)"><rect class="basic label-container" style="fill:#3a2a12 !important;stroke:#f59e0b !important" x="-90.0859375" y="-44.25" width="180.171875" height="88.5"/><g class="label" style="color:#ffedd5 !important;font-size:13px !important" transform="translate(-60.0859375, -29.25)"><rect/><foreignObject width="120.171875" height="58.5"><div style="color: rgb(255, 237, 213) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ffedd5 !important;font-size:13px !important" class="nodeLabel"><p>DECIDES BLOCK<br />Flag - Block progress<br />(YES = blocker)</p></span></div></foreignObject></g></g><g class="node default gt" id="my-svg-flowchart-GTd-3" data-look="classic" transform="translate(175.5, 473.5)"><rect class="basic label-container" style="fill:#3a2a12 !important;stroke:#f59e0b !important" x="-130" y="-54" width="260" height="108"/><g class="label" style="color:#ffedd5 !important;font-size:13px !important" transform="translate(-100, -39)"><rect/><foreignObject width="200" height="78"><div style="color: rgb(255, 237, 213) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ffedd5 !important;font-size:13px !important" class="nodeLabel"><p>INFO<br />Perceived Severity, Classification,<br />KPI impact (Availability, Accessibility, ...)</p></span></div></foreignObject></g></g></g></g><g class="node default intake" id="my-svg-flowchart-Ia-11" data-look="classic" transform="translate(243.3984375, 900)"><rect class="basic label-container" style="fill:#1e293b !important;stroke:#94a3b8 !important" x="-69.5703125" y="-34.5" width="139.140625" height="69"/><g class="label" style="color:#e2e8f0 !important;font-size:13px !important" transform="translate(-39.5703125, -19.5)"><rect/><foreignObject width="79.140625" height="39"><div style="color: rgb(226, 232, 240) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2e8f0 !important;font-size:13px !important" class="nodeLabel"><p>Cell Name<br />(one per cell)</p></span></div></foreignObject></g></g><g class="node default intake" id="my-svg-flowchart-Ienb-12" data-look="classic" transform="translate(432.546875, 900)"><rect class="basic label-container" style="fill:#1e293b !important;stroke:#94a3b8 !important" x="-69.578125" y="-34.5" width="139.15625" height="69"/><g class="label" style="color:#e2e8f0 !important;font-size:13px !important" transform="translate(-39.578125, -19.5)"><rect/><foreignObject width="79.15625" height="39"><div style="color: rgb(226, 232, 240) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2e8f0 !important;font-size:13px !important" class="nodeLabel"><p>enodebid<br />(one per site)</p></span></div></foreignObject></g></g><g class="node default" id="my-svg-flowchart-LVL-14" data-look="classic" transform="translate(1164.37109375, 900)"><polygon points="163,0 326,-163 163,-326 0,-163" class="label-container" transform="translate(-162.5, 163)"/><g class="label" style="" transform="translate(-100, -48)"><rect/><foreignObject width="200" height="96"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>STEP 1 · NODE LEVEL ?<br />look up Equipment Type + Tech<br />in alarm_node_level</p></span></div></foreignObject></g></g><g class="node default step" id="my-svg-flowchart-CELL-20" data-look="classic" transform="translate(601.15234375, 1235.5)"><rect class="basic label-container" style="fill:#1e293b !important;stroke:#94a3b8 !important" x="-125.1875" y="-44.25" width="250.375" height="88.5"/><g class="label" style="color:#e2e8f0 !important;font-size:13px !important" transform="translate(-95.1875, -29.25)"><rect/><foreignObject width="190.375" height="58.5"><div style="color: rgb(226, 232, 240) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2e8f0 !important;font-size:13px !important" class="nodeLabel"><p>CELL MATCH<br />Equipment ID = on-air Cell Name<br />(site_db.cell_name)</p></span></div></foreignObject></g></g><g class="node default step" id="my-svg-flowchart-SITE-26" data-look="classic" transform="translate(906.33984375, 1235.5)"><rect class="basic label-container" style="fill:#1e293b !important;stroke:#94a3b8 !important" x="-130" y="-73.5" width="260" height="147"/><g class="label" style="color:#e2e8f0 !important;font-size:13px !important" transform="translate(-100, -58.5)"><rect/><foreignObject width="200" height="117"><div style="color: rgb(226, 232, 240) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2e8f0 !important;font-size:13px !important" class="nodeLabel"><p>SITE MATCH<br />parse enbid from Equipment Sub ID<br />enbid=280182 = on-air enodebid<br />(site_db.enodebid) - no cell-name search</p></span></div></foreignObject></g></g><g class="node default hold" id="my-svg-flowchart-HOLD-32" data-look="classic" transform="translate(1365.44921875, 1235.5)"><rect class="basic label-container" style="fill:#2a2a2a !important;stroke:#9ca3af !important;stroke-dasharray:4 3 !important" x="-130" y="-54" width="260" height="108"/><g class="label" style="color:#d1d5db !important;font-size:13px !important" transform="translate(-100, -39)"><rect/><foreignObject width="200" height="78"><div style="color: rgb(209, 213, 219) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#d1d5db !important;font-size:13px !important" class="nodeLabel"><p>ON HOLD<br />different ID format - awaiting client<br />(not implemented)</p></span></div></foreignObject></g></g><g class="node default raw" id="my-svg-flowchart-RAW-34" data-look="classic" transform="translate(747.77734375, 1636.25)"><rect class="basic label-container" style="fill:#0f1f2b !important;stroke:#38bdf8 !important" x="-130" y="-44.25" width="260" height="88.5"/><g class="label" style="color:#e0f2fe !important;font-size:13px !important" transform="translate(-100, -29.25)"><rect/><foreignObject width="200" height="58.5"><div style="color: rgb(224, 242, 254) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e0f2fe !important;font-size:13px !important" class="nodeLabel"><p>ran.alarm_monitoring_raw<br />(only alarms matching an on-air site/cell are kept)</p></span></div></foreignObject></g></g><g class="node default step" id="my-svg-flowchart-S2-38" data-look="classic" transform="translate(510.5703125, 2027.25)"><rect class="basic label-container" style="fill:#1e293b !important;stroke:#94a3b8 !important" x="-130" y="-63.75" width="260" height="127.5"/><g class="label" style="color:#e2e8f0 !important;font-size:13px !important" transform="translate(-100, -48.75)"><rect/><foreignObject width="200" height="97.5"><div style="color: rgb(226, 232, 240) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2e8f0 !important;font-size:13px !important" class="nodeLabel"><p>STEP 2  ·  CLASSIFY EACH ALARM<br />look up its Alarm Code in Ground Truth<br />filter Technology = 4G  -&gt;  Severity + Block flag</p></span></div></foreignObject></g></g><g class="node default" id="my-svg-flowchart-DEC-42" data-look="classic" transform="translate(510.5703125, 2292)"><polygon points="151,0 302,-151 151,-302 0,-151" class="label-container" transform="translate(-150.5, 151)"/><g class="label" style="" transform="translate(-100, -36)"><rect/><foreignObject width="200" height="72"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>any active alarm with<br />Flag - Block progress = YES ?</p></span></div></foreignObject></g></g><g class="node default block" id="my-svg-flowchart-BLOCK-44" data-look="classic" transform="translate(372.09765625, 2571)"><rect class="basic label-container" style="fill:#3a1212 !important;stroke:#f87171 !important" x="-130" y="-54" width="260" height="108"/><g class="label" style="color:#fecaca !important;font-size:13px !important" transform="translate(-100, -39)"><rect/><foreignObject width="200" height="78"><div style="color: rgb(254, 202, 202) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#fecaca !important;font-size:13px !important" class="nodeLabel"><p>WORKFLOW BLOCKED<br />fault not cleared - do not progress<br />(re-checks until it clears)</p></span></div></foreignObject></g></g><g class="node default ok" id="my-svg-flowchart-SHOW-46" data-look="classic" transform="translate(649.04296875, 2571)"><rect class="basic label-container" style="fill:#0f2b12 !important;stroke:#4ade80 !important" x="-96.9453125" y="-44.25" width="193.890625" height="88.5"/><g class="label" style="color:#dcfce7 !important;font-size:13px !important" transform="translate(-66.9453125, -29.25)"><rect/><foreignObject width="133.890625" height="58.5"><div style="color: rgb(220, 252, 231) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#dcfce7 !important;font-size:13px !important" class="nodeLabel"><p>SHOW ALARMS ON UI<br />concern, not a blocker<br />workflow may progress</p></span></div></foreignObject></g></g></g></g></g><defs><filter id="my-svg-drop-shadow" height="130%" width="130%"><feDropShadow dx="4" dy="4" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs><defs><filter id="my-svg-drop-shadow-small" height="150%" width="150%"><feDropShadow dx="2" dy="2" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs></svg></figure>
+<blockquote>
+<p>Diagram source: <code>fault_4g_flow.mmd</code> — re-render with
+<code>mmdc -i fault_4g_flow.mmd -o fault_4g_flow.png -b white -s 2</code></p>
+</blockquote>
+<p><strong>In words:</strong> for each live alarm, read its <strong>Equipment Type + Technology</strong> and look up the
+<strong>node level</strong> (<code>site</code> | <code>cell</code>) in <strong>F3 (<code>alarm_node_level</code>)</strong> → match at that level against the
+<strong>on-air Gold set</strong>: <code>cell</code> ⇒ <code>Equipment ID</code> = <code>site_db.cell_name</code>; <code>site</code> ⇒ parse <code>enbid</code> from
+<code>Equipment Sub ID</code> = <code>site_db.enodebid</code> → only alarms hitting an on-air site/cell land in <code>ran.alarm_monitoring_raw</code> →
+for each, look up its <code>Alarm Code</code> in the <strong>ground truth</strong> (F1, <code>Technology = 4G</code>) to get its <strong>severity</strong>
+and <strong>block flag</strong> → if <strong>any</strong> active alarm is <code>Flag - Block progress = YES</code>, the <strong>workflow is blocked</strong>
+(fault not cleared); the rest are shown on the UI as concerns but don't block.</p>
+<p><strong>Which columns do the work:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>F1 · Alarm Vs KPI Impact</th>
+<th>F2 · alarm-monitoring.csv (live)</th>
+<th>F3 · alarm_node_level</th>
+<th>Intake (on-air Gold)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Level decide</strong></td>
+<td>—</td>
+<td><code>Equipment Type</code> + <code>Technology</code></td>
+<td><code>Equipment Type</code>+<code>Tech</code> → <code>Node Level</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>Cell match</strong></td>
+<td>—</td>
+<td><code>Equipment ID</code></td>
+<td>—</td>
+<td><code>site_db.cell_name</code></td>
+</tr>
+<tr>
+<td><strong>Site match</strong></td>
+<td>—</td>
+<td><code>enbid</code> (from <code>Equipment Sub ID</code>)</td>
+<td>—</td>
+<td><code>site_db.enodebid</code></td>
+</tr>
+<tr>
+<td><strong>Alarm join</strong></td>
+<td><code>Alarm Code</code></td>
+<td><code>Alarm Code</code></td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>Tech filter</strong></td>
+<td><code>Technology</code> = <code>4G</code></td>
+<td><code>Technology</code> = <code>LTE</code> <em>(= 4G)</em></td>
+<td><code>Tech</code> = <code>4G</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>Blocks?</strong></td>
+<td><code>Flag - Block progress</code> (<code>YES</code>)</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>Severity / display</strong></td>
+<td><code>Perceived Severity</code>, <code>Classification</code>, KPI-impact cols</td>
+<td><code>Perceived Severity</code>, <code>Status</code>, <code>Event Time</code>, <code>Service Affected</code></td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-matching-decision-rules-grounded-in-the-data">3. Matching &amp; decision rules (grounded in the data)</h2>
+<h3 id="31-tie-a-live-alarm-level-driven">3.1 Tie a live alarm — level-driven (site <strong>or</strong> cell)</h3>
+<p>An alarm is matched at one of <strong>two levels</strong>, and the level is <strong>read from the F3 reference table <code>ran.alarm_node_level</code>, keyed by <code>Equipment Type</code> + <code>Tech</code></strong> — not from F1, and not guessed in code:</p>
+<ol>
+<li><strong>Node level comes from F3 (<code>alarm_node_level</code>).</strong> For each live alarm, look up its <strong><code>Equipment Type</code> + <code>Technology</code></strong> in <code>ran.alarm_node_level</code> → get <strong><code>Node Level</code> (<code>site</code> | <code>cell</code>)</strong>. The reference is data-owned (one row per equipment type per tech), so adding/retyping equipment never touches code. Technology is reconciled in the join: <strong><code>LTE ≡ 4G</code>, <code>NR ≡ 5G</code></strong>.</li>
+<li><strong>Branch on the level:</strong>
+<ul>
+<li><strong><code>cell</code></strong> → match <code>Equipment ID</code> against the on-air <strong><code>site_db.cell_name</code></strong> (rows whose <code>site_id ∈ intake_site</code>).</li>
+<li><strong><code>site</code></strong> → <strong>skip the cell match</strong>. Parse the <strong><code>Equipment Sub ID</code></strong> MO-path string (<strong>not plain text</strong>):
+<pre><code>/ENB[id/enbid=280182]/DU[id/du-id=2]/RIU[id/riu-id=4]/Radio[id/radio-id=10]</code></pre>
+→ extract <strong><code>enbid=280182</code></strong> → match it against the on-air <strong><code>site_db.enodebid</code></strong>. No cell.</li>
+</ul>
+</li>
+<li><strong>Landing:</strong> only alarms that hit an on-air site/cell are kept — they land in <strong><code>ran.alarm_monitoring_raw</code></strong>. Alarms whose <code>Equipment Type</code>+<code>Tech</code> is absent from <code>alarm_node_level</code>, or whose ID hits no on-air site, are dropped.</li>
+</ol>
+<p><strong>Implementation:</strong> this lives in <code>brain/ingestion/plugins/ingestion/transforms/alarm_gold.py</code> (<code>populate_alarm_monitoring</code>), not in a DAG. The on-air match runs at the <strong>raw &rarr; gold</strong> step, so <code>ran.alarm_monitoring_raw</code> keeps the full feed and <code>ran.alarm_monitoring</code> keeps only the matched rows. The SQL <code>JOIN</code>s <code>ran.alarm_node_level</code> (tech-reconciled LTE&rarr;4G / NR&rarr;5G), then a <code>JOIN LATERAL</code> whose branch (<code>cell</code>/<code>site</code>) picks the <code>site_db</code> column to match. On-air scoping is the clause <code>AND s.site_id IN (SELECT site_id FROM ran.intake_site)</code>, once per branch &mdash; <code>alarm_gold.py:46</code> (cell) and <code>alarm_gold.py:53</code> (site). Raw alarm rows are aliased <code>r</code>.</p>
+<p><em>Corrected 2026-08-12 (Phase 12a plan 06).</em> This paragraph previously cited an <code>ALARM_LOAD_FILTER_SQL</code> constant in <code>brain/ingestion/dags/ingest_site_pipeline.py</code>. That symbol <strong>no longer exists anywhere under <code>brain/</code></strong> &mdash; the filter moved into the <code>alarm_gold</code> transform when the raw/gold split was introduced, and the reference was already stale before Phase 12a. The transform is shared: it is called by <code>ingest_fault_alarm_monitoring</code> (the split topology's alarm DAG, currently paused) and by <code>ingest_site_pipeline</code>'s <code>alarm_gold</code> task (still the production path &mdash; the cutover has not happened). Neither DAG holds the SQL.</p>
+<p><strong>Why the old (cell-only) match was partial</strong> — evidence on the 439 4G rows:</p>
+<table>
+<thead>
+<tr><th>Method</th><th>Coverage</th><th>Equipment types</th></tr>
+</thead>
+<tbody>
+<tr><td>exact <code>Cell Name</code> = <code>Equipment ID</code></td><td><strong>66%</strong></td><td>cell-level: <code>MACRO_CELL</code>, <code>RIUD_RRH</code>, <code>DAS_RRH</code></td></tr>
+<tr><td>+ Site-ID prefix (token before first <code>_</code>) = ECGI <code>Site ID</code></td><td><strong>76%</strong></td><td>node-level: <code>Macro</code>, <code>RIUD_DU</code>, <code>DAS_RIU</code></td></tr>
+<tr><td>neither</td><td><strong>24%</strong></td><td>site/node-level — now handled by the <code>site</code> path (parse <code>Equipment Sub ID</code>)</td></tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr><th>Equipment Type</th><th>Rows</th><th>Handling under the level-driven flow</th></tr>
+</thead>
+<tbody>
+<tr><td><code>MACRO_ENB</code> (<code>Macro ENV</code>)</td><td>81</td><td><strong>site-level</strong> — parse <code>enbid</code> from <code>Equipment Sub ID</code> → match <code>ns_site.enb_id</code>. No cell search.</td></tr>
+<tr><td><code>MACRO_VDU</code> (<code>Macro VDU</code>)</td><td>6</td><td><strong>site-level</strong> — same.</td></tr>
+<tr><td><code>IDSC_COMBO_CELL</code></td><td>17</td><td><strong>ON HOLD — do not touch.</strong> Different ID format (<code>RQA13D1010474_F11_CS01_12</code>); awaiting customer clarity (see §7).</td></tr>
+</tbody>
+</table>
+<p><strong>Net flow (top of the fault matching):</strong></p>
+<pre><code>tech  = normalise(alarm.Technology)                      # LTE→4G, NR→5G
+level = alarm_node_level[alarm.Equipment_Type, tech]     # site | cell   (F3 reference)
+if level == "cell":
+    keep if alarm.Equipment_ID ∈ on-air site_db.cell_name
+elif level == "site":
+    enbid = parse_enbid(alarm.Equipment_Sub_ID)          # /ENB[id/enbid=280182]/… → 280182
+    keep if enbid ∈ on-air site_db.enodebid
+# Equipment Type not in alarm_node_level → dropped
+# IDSC_COMBO_CELL / Femto Cell → hold (awaiting client)
+# on-air scope: site_db WHERE site_id ∈ intake_site</code></pre>
+<blockquote>
+<p><strong>Open dependencies:</strong> (a) <code>Node Level</code> values in <code>alarm_node_level</code> are stored capitalised (<code>Cell</code> / <code>Site</code> / <code>Femto Cell</code>) and matched case-insensitively; (b) <code>IDSC_COMBO_CELL</code> (<code>Femto Cell</code>) is out of scope until the client clarifies — see §7.</p>
+</blockquote>
+<h3 id="32-normalise-technology">3.2 Normalise Technology</h3>
+<p>F2 labels 4G as <strong><code>LTE</code></strong> (and 5G as <code>NR</code>); F1 and F3 use <strong><code>4G</code></strong>/<code>5G</code>. Normalise (<code>LTE ≡ 4G</code>, <code>NR ≡ 5G</code>) before filtering/joining — done in the <code>alarm_node_level</code> join.</p>
+<h3 id="33-classify-each-active-alarm">3.3 Classify each active alarm</h3>
+<p>Join the live alarm's <code>Alarm Code</code> → F1 ground truth (Technology = 4G) → read <code>Perceived Severity</code> +
+<code>Flag - Block progress</code>. (Only alarms whose <code>Status</code> is open/active count.)</p>
+<h3 id="34-the-gate">3.4 The gate</h3>
+<ul>
+<li><strong>any</strong> active alarm with <code>Flag - Block progress = YES</code> → <strong>BLOCKED</strong> — the workflow does not progress
+  (re-checked until the alarm clears — the park-and-re-trigger dependency).</li>
+<li>otherwise → alarms are <strong>shown on the UI</strong> as concerns; the workflow may progress.</li>
+</ul>
+<hr />
+<h2 id="4-data-model-ground-truth-from-f1-alarm-vs-kpi-impact">4. Data model — Ground truth (from F1 <code>Alarm Vs KPI Impact</code>)</h2>
+<p><code>ran.alarm_vs_kpi</code> — one row per alarm code. <strong>All 20 columns</strong> of the <code>Data</code> sheet (stored, with data). The match <strong>level is no longer a column here</strong> — it lives in the separate F3 reference <code>ran.alarm_node_level</code> (§4.1), keyed by equipment type rather than alarm code.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Source</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>org_id</code>, <code>workspace_id</code></td>
+<td>—</td>
+<td>text</td>
+<td>tenant scope</td>
+</tr>
+<tr>
+<td><code>alarm_code</code></td>
+<td><code>Alarm Code</code></td>
+<td>text</td>
+<td><strong>PK / join key</strong> to live alarms</td>
+</tr>
+<tr>
+<td><code>technology</code></td>
+<td><code>Technology</code></td>
+<td>text</td>
+<td><strong>filter</strong> (<code>4G</code>)</td>
+</tr>
+<tr>
+<td><code>flag_block_progress</code></td>
+<td><code>Flag - Block progress</code></td>
+<td>bool</td>
+<td><code>YES</code> ⇒ blocker</td>
+</tr>
+<tr>
+<td><code>perceived_severity</code></td>
+<td><code>Perceived Severity</code></td>
+<td>text</td>
+<td>CRITICAL / …</td>
+</tr>
+<tr>
+<td><code>classification</code></td>
+<td><code>Classification</code></td>
+<td>text</td>
+<td>OUTAGE / …</td>
+</tr>
+<tr>
+<td><code>alarm_name</code></td>
+<td><code>Alarm Name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>count</code></td>
+<td><code># Count</code></td>
+<td>int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>vendor</code></td>
+<td><code>Vendor</code></td>
+<td>text</td>
+<td>e.g. <code>All 4G</code></td>
+</tr>
+<tr>
+<td><code>alarm_description</code></td>
+<td><code>Alarm Description</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>probable_cause</code></td>
+<td><code>Probable Cause</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>availability</code></td>
+<td><code>Availability</code></td>
+<td>text</td>
+<td>KPI impact (Source/Neighbor)</td>
+</tr>
+<tr>
+<td><code>accessibility</code></td>
+<td><code>Accessibility</code></td>
+<td>text</td>
+<td>KPI impact</td>
+</tr>
+<tr>
+<td><code>retainability</code></td>
+<td><code>Retainability</code></td>
+<td>text</td>
+<td>KPI impact</td>
+</tr>
+<tr>
+<td><code>intra_hosr</code></td>
+<td><code>Intra HOSR</code></td>
+<td>text</td>
+<td>KPI impact</td>
+</tr>
+<tr>
+<td><code>inter_hosr</code></td>
+<td><code>Inter HOSR</code></td>
+<td>text</td>
+<td>KPI impact</td>
+</tr>
+<tr>
+<td><code>rlf</code></td>
+<td><code>RLF</code></td>
+<td>text</td>
+<td>KPI impact</td>
+</tr>
+<tr>
+<td><code>user_thpt</code></td>
+<td><code>User THPT</code></td>
+<td>text</td>
+<td>KPI impact</td>
+</tr>
+<tr>
+<td><code>x2_rate</code></td>
+<td><code>X2 Rate</code></td>
+<td>text</td>
+<td>KPI impact</td>
+</tr>
+<tr>
+<td><code>ho_attempt_kddi</code></td>
+<td><code>HO Attempt towards KDDI</code></td>
+<td>text</td>
+<td>KPI impact</td>
+</tr>
+<tr>
+<td><code>remarks</code></td>
+<td><code>Remarks</code></td>
+<td>text</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>PK: <code>(org_id, workspace_id, alarm_code)</code> <em>(confirm alarm codes are unique per technology — else add <code>technology</code> to the key).</em></p>
+<h2 id="5-data-model-live-alarms-from-f2-alarm-monitoringcsv">5. Data model — Live alarms (from F2 <code>alarm-monitoring.csv</code>)</h2>
+<p><code>ran.ns_alarm_event</code> — one row per alarm event from the fault system. <strong>All 34 columns</strong> of the CSV, plus
+the resolved site/cell link. Roles marked: <strong>[MATCH]</strong> ties it to a site, <strong>[JOIN]</strong> looks it up in the
+ground truth, <strong>[GATE]</strong> drives the block decision.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Source</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>org_id</code>, <code>workspace_id</code></td>
+<td>—</td>
+<td>text</td>
+<td>tenant scope</td>
+</tr>
+<tr>
+<td><code>site_id</code></td>
+<td><em>resolved</em></td>
+<td>text</td>
+<td><strong>[MATCH result]</strong> from <code>Equipment ID</code> → ECGI (cell or Site-ID prefix)</td>
+</tr>
+<tr>
+<td><code>cell_id</code></td>
+<td><em>resolved</em></td>
+<td>text</td>
+<td><code>Sec…</code> when the match is cell-level; null for node-level</td>
+</tr>
+<tr>
+<td><code>equipment_id</code></td>
+<td><code>Equipment ID</code></td>
+<td>text</td>
+<td><strong>[MATCH]</strong> key to the site's cells</td>
+</tr>
+<tr>
+<td><code>alarm_code</code></td>
+<td><code>Alarm Code</code></td>
+<td>text</td>
+<td><strong>[JOIN]</strong> → <code>ns_alarm_ref.alarm_code</code></td>
+</tr>
+<tr>
+<td><code>technology</code></td>
+<td><code>Technology</code></td>
+<td>text</td>
+<td><strong>[GATE]</strong> <code>LTE</code> ⇒ normalise to <code>4G</code></td>
+</tr>
+<tr>
+<td><code>perceived_severity</code></td>
+<td><code>Perceived Severity</code></td>
+<td>text</td>
+<td>Major / …</td>
+</tr>
+<tr>
+<td><code>classification</code></td>
+<td><code>Classification</code></td>
+<td>text</td>
+<td>Outage / …</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td><code>Status</code></td>
+<td>text</td>
+<td>Open / … (active vs cleared)</td>
+</tr>
+<tr>
+<td><code>event_time</code></td>
+<td><code>Event Time</code></td>
+<td>timestamptz</td>
+<td>JST</td>
+</tr>
+<tr>
+<td><code>close_time</code></td>
+<td><code>Close Time</code></td>
+<td>timestamptz</td>
+<td><code>-</code> when open</td>
+</tr>
+<tr>
+<td><code>last_occurrence_time</code></td>
+<td><code>Last Occurrence Time</code></td>
+<td>timestamptz</td>
+<td></td>
+</tr>
+<tr>
+<td><code>occurrence_count</code></td>
+<td><code>Occurrence Count</code></td>
+<td>int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ageing</code></td>
+<td><code>Ageing</code></td>
+<td>text</td>
+<td>e.g. <code>6 Minute(s) 54 Second(s)</code></td>
+</tr>
+<tr>
+<td><code>service_affected</code></td>
+<td><code>Service Affected</code></td>
+<td>text</td>
+<td>Yes/No</td>
+</tr>
+<tr>
+<td><code>domain</code></td>
+<td><code>Domain</code></td>
+<td>text</td>
+<td>RAN</td>
+</tr>
+<tr>
+<td><code>vendor</code></td>
+<td><code>Vendor</code></td>
+<td>text</td>
+<td>ALTIOSTAR / …</td>
+</tr>
+<tr>
+<td><code>region_product</code></td>
+<td><code>Region/Product</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>prefecture_cluster</code></td>
+<td><code>Prefecture/Cluster</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>city_namespace</code></td>
+<td><code>City/Namespace</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>rf_cluster_node</code></td>
+<td><code>RF Cluster/Node</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>gc_cdc_name</code></td>
+<td><code>GC/CDC Name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>equipment_type</code></td>
+<td><code>Equipment Type</code></td>
+<td>text</td>
+<td>MACRO_CELL / MACRO_ENB / RIUD_RRH / …</td>
+</tr>
+<tr>
+<td><code>equipment_sub_id</code></td>
+<td><code>Equipment Sub ID</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>equipment_id_status</code></td>
+<td><code>Equipment ID Status</code></td>
+<td>text</td>
+<td>In-Service / …</td>
+</tr>
+<tr>
+<td><code>alarm_type</code></td>
+<td><code>Alarm Type</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>alarm_name</code></td>
+<td><code>Alarm Name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>alarm_description</code></td>
+<td><code>Alarm Description</code></td>
+<td>text</td>
+<td>JSON-ish</td>
+</tr>
+<tr>
+<td><code>probable_cause</code></td>
+<td><code>Probable Cause</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ems</code></td>
+<td><code>EMS</code></td>
+<td>text</td>
+<td>OBF / …</td>
+</tr>
+<tr>
+<td><code>correlation_type</code></td>
+<td><code>Correlation Type</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>incident_id</code></td>
+<td><code>Incident ID</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>entity_family</code></td>
+<td><code>Entity Family</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>reported_severity</code></td>
+<td><code>Reported Severity</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>alarm_hierarchy</code></td>
+<td><code>Alarm Hierarchy</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ticket_id</code></td>
+<td><code>Ticket ID</code></td>
+<td>text</td>
+<td>leading space in header</td>
+</tr>
+<tr>
+<td><code>planned_event_name</code></td>
+<td><code>Planned Event Name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>PK: a surrogate (e.g. <code>event_id</code>) or <code>(equipment_id, alarm_code, event_time)</code>; index on
+<code>(org_id, workspace_id, site_id)</code>. The <strong>fault verdict per site</strong> is derived: does any active
+(<code>status</code> open) row join to a ground-truth alarm with <code>flag_block_progress = YES</code>?</p>
+<hr />
+<h2 id="6-where-this-fits-workflow_id-airflow">6. Where this fits — <code>workflow_id</code> &amp; Airflow</h2>
+<p>Fault runs <strong>inside an existing workflow</strong> — Intake already opened it (full picture:
+<code>docs/DATA_MODEL/AGENT_DATA_RELATIONSHIPS.md</code>):</p>
+<ul>
+<li>It <strong>picks up sites at <code>intake · passed</code></strong> (keyed by <code>site_id</code>), writes its <code>ns_alarm_event</code> rows keyed by
+  <code>workflow_id</code> + <code>site_id</code> (+ <code>cell_id</code> for cell-level matches), classifies them via <code>ns_alarm_ref</code>
+  (<code>alarm_code</code>), and <strong>advances <code>ns_workflow</code></strong> to <code>fault · passed</code> or <code>fault · blocked</code>.</li>
+<li><code>ns_alarm_ref</code> (the F1 ground truth) is a <strong>shared reference</strong> loaded once for the tenant — not per-site.</li>
+</ul>
+<p><strong>Under Airflow:</strong> <code>fault_check</code> is the <strong>second task</strong> of the per-site DAG run. On <code>blocked</code>, the run
+<strong>parks on a deferrable sensor</strong>; when a later <code>alarm-monitoring</code> file clears the blocking alarm, the sensor
+fires and the DAG <strong>progresses to Config</strong> — the park-and-re-trigger, keyed by the same <code>workflow_id</code>. The
+block decision (<code>Flag - Block progress = YES</code>) is exactly the gate that decides whether the DAG advances.</p>
+<h2 id="7-data-quality-flags-open-questions">7. Data-quality flags &amp; open questions</h2>
+<ol>
+<li><strong>Cell-to-alarm match — level-driven via F3 (see §3.1).</strong> The level comes from
+   <strong><code>ran.alarm_node_level</code></strong> keyed by <strong><code>Equipment Type</code> + <code>Tech</code></strong>: <code>site</code> alarms → parse <strong><code>enbid</code></strong>
+   from the <code>Equipment Sub ID</code> MO-path (<code>/ENB[id/enbid=280182]/…</code> → <code>280182</code> = <code>site_db.enodebid</code>); <code>cell</code>
+   alarms → <code>Equipment ID</code> = <code>site_db.cell_name</code>. Both scoped to the on-air Gold set (<code>site_id ∈ intake_site</code>).
+   <strong><code>IDSC_COMBO_CELL</code> (<code>Femto Cell</code>) is ON HOLD</strong> — different ID format (<code>RQA13D…</code>), awaiting client
+   clarity; <strong>do not implement it yet</strong>.</li>
+<li><strong>Technology label</strong> — <code>LTE</code> (F2) vs <code>4G</code> (F1); normalise.</li>
+<li><strong>Third file</strong> — is <code>alarm-library-flagged progress blocked.xlsx</code> the authoritative library, or does F1
+   <code>Alarm Vs KPI Impact</code> win for the block flag? (Their <code>Alarm Code</code> formats differ: <code>1246</code> vs <code>WT-49181863</code>.)</li>
+<li><strong>Active vs cleared</strong> — which <code>Status</code> values count as "active" (<code>Open</code> / not <code>Close Time</code>)?</li>
+<li><strong>Alarm code uniqueness</strong> — unique per technology, or can the same code mean different things across 4G/5G?</li>
+<li><strong><code>Flag - Block progress</code></strong> — values seen as <code>YES</code>/blank; confirm blank = not a blocker.</li>
+</ol>
+</main></body></html>

@@ -1,0 +1,14 @@
+# Claude Code local session settings (machine-specific, never shared)
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv*/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Postgres data and Airflow logs live in named Docker volumes, not bind mounts,
+# so they never land in this folder -- nothing to ignore for them here.

@@ -1,0 +1,212 @@
+# Source Registry — trimmed for the standalone sample project.
+#
+# Cut down from the platform's ingestion/sources.yaml to the five sources that
+# feed the Intake + Fault DAGs here. protocol/connection_id/size_mb/on_missing_file
+# and the bronze.* control-plane fields (dag_id, dag_conf_key, connection_id, ...)
+# are dropped — MinIO is out of scope, files are read straight off local disk, and
+# there is no bronze.source_registry to seed. format, file_pattern, target_table,
+# pk_columns, filters, bool_columns and schema.* are kept verbatim from the platform
+# file: they are the real, hard-won mapping (synonyms, filters, dtype hints) for
+# these five real client files.
+#
+# The `Locked status != "Yes"` filter on intake_4g_on_air exists ONLY here — it is
+# in no .md, no .html and no diagram. Trim this file with care.
+
+sources:
+  # ───────────────────────────────────────────────────────────────────────
+  # Intake agent sources
+  # ───────────────────────────────────────────────────────────────────────
+  - source_id: intake_4g_on_air
+    source_name: "4G On-Air Site List"
+    format: xlsb
+    protocol: local
+    source_uri: "/opt/airflow/data/intake/"
+    file_pattern: "4G_On-Air_*.xlsb"
+    target_table: "ran.raw_intake_site"
+    pk_columns: ["site_id"]
+    filters:
+      - column: "Date of Intg"
+        op: "max"
+      - column: "Status"
+        op: "eq"
+        value: "On-Air"
+      - column: "Locked status"
+        op: "ne"
+        value: "Yes"
+    bool_columns: ["locked"]
+    schema:
+      expected_columns:
+        site_id: ["SARF ID", "Site ID", "SITE_ID"]
+        status: ["Status", "On-Air Status"]
+        date_of_intg: ["Date of Intg", "Integration Date"]
+        locked: ["Locked status", "Locked"]
+        pod: ["POD"]
+        site_type: ["Site Type"]
+      sheet_hints: ["4G", "Sheet1", "On-Air"]
+
+  - source_id: intake_ecgi_site_db
+    source_name: "ECGI Site Database"
+    format: xlsx
+    protocol: local
+    source_uri: "/opt/airflow/data/intake/"
+    file_pattern: "ECGI_*.xlsx"
+    target_table: "ran.site_db"
+    pk_columns: []
+    filters: []
+    bool_columns: []
+    schema:
+      expected_columns:
+        rrh_serial_number: ["RRH_serial number", "RRH Serial Number"]
+        ecgi: ["ECGI"]
+        cellid: ["CellID", "Cell ID"]
+        riu_serial_number: ["RIU_serial number", "RIU Serial Number"]
+        bandwidth: ["BANDWIDTH", "Bandwidth"]
+        dl_earfcn: ["DL-EARFCN", "DL EARFCN"]
+        site_id: ["Site ID", "SITE_ID", "SiteID"]
+        clutter_type: ["Clutter TYPE", "Clutter Type"]
+        cell_name: ["Cell Name", "CellName"]
+        date_of_on_air: ["Date of On Air", "On Air Date"]
+        enodebid: ["enodeBid", "eNodeB ID", "eNB ID"]
+        vdu_name: ["vDU name", "vDU Name"]
+        vcu_name: ["vCU name", "vCU Name"]
+        gc_name: ["GC Name"]
+        gc_code: ["GC Code"]
+        pci: ["PCI"]
+        rsi: ["RSI"]
+        azimuth: ["Azimuth"]
+        ant_height: ["Ant. Height", "Antenna Height"]
+        ant_name: ["Ant. Name", "Antenna Name"]
+        ant_vender: ["Ant. Vender", "Antenna Vendor"]
+        vcu_id: ["vCU ID", "vCU_ID"]
+        vdu_id: ["vDU ID", "vDU_ID"]
+        riu_number: ["RIU Number"]
+        ems_name: ["EMS Name", "EMS_Name"]
+        software_build: ["Software Build"]
+        tac: ["TAC"]
+        mech_antenna_tilt: ["Mech Antenna Tilt", "Mechanical Tilt"]
+        electrical_antenna_tilt: ["Electrical Antenna Tilt", "Electrical Tilt"]
+        latitude: ["Latitude", "Lat"]
+        longitude: ["Longitude", "Lon"]
+        type: ["TYPE", "Type"]
+        cluster: ["Cluster"]
+        zone: ["Zone"]
+        city: ["City"]
+        prefecture: ["Prefecture"]
+        subregion: ["SubRegion", "Sub Region"]
+        region: ["Region"]
+        region_manager: ["Region Manager"]
+      sheet_hints: ["ECGI", "Sheet1"]
+
+  # ───────────────────────────────────────────────────────────────────────
+  # Fault agent sources
+  # ───────────────────────────────────────────────────────────────────────
+  - source_id: fault_alarm_monitoring
+    source_name: "Alarm Monitoring Raw Export"
+    format: csv
+    protocol: local
+    source_uri: "/opt/airflow/data/fault/"
+    file_pattern: "*.alarm-monitoring.csv"
+    target_table: "ran.alarm_monitoring_raw"
+    pk_columns: []          # truncate-reload: raw keeps every alarm (dup codes allowed)
+    filters: []
+    bool_columns: []
+    schema:
+      expected_columns:
+        event_time: ["Event Time"]
+        close_time: ["Close Time"]
+        classification: ["Classification"]
+        perceived_severity: ["Perceived Severity"]
+        occurrence_count: ["Occurrence Count"]
+        last_occurrence_time: ["Last Occurrence Time"]
+        domain: ["Domain"]
+        vendor: ["Vendor"]
+        region_product: ["Region/Product", "Region Product"]
+        prefecture_cluster: ["Prefecture/Cluster", "Prefecture Cluster"]
+        city_namespace: ["City/Namespace", "City Namespace"]
+        rf_cluster_node: ["RF Cluster/Node", "RF Cluster Node"]
+        gc_cdc_name: ["GC/CDC Name", "GC CDC Name"]
+        equipment_type: ["Equipment Type"]
+        equipment_id: ["Equipment ID"]
+        equipment_sub_id: ["Equipment Sub ID"]
+        equipment_id_status: ["Equipment ID Status"]
+        alarm_type: ["Alarm Type"]
+        alarm_code: ["Alarm Code"]
+        alarm_name: ["Alarm Name"]
+        ageing: ["Ageing"]
+        technology: ["Technology"]
+        alarm_description: ["Alarm Description"]
+        probable_cause: ["Probable Cause"]
+        service_affected: ["Service Affected"]
+        ems: ["EMS"]
+        correlation_type: ["Correlation Type"]
+        incident_id: ["Incident ID"]
+        entity_family: ["Entity Family"]
+        reported_severity: ["Reported Severity"]
+        status: ["Status"]
+        alarm_hierarchy: ["Alarm Hierarchy"]
+        ticket_id: ["Ticket ID"]
+        planned_event_name: ["Planned Event Name"]
+      sheet_hints: ["Sheet1", "Data", "Alarm"]
+
+  - source_id: fault_alarm_node_level
+    source_name: "Alarm Equipment Type -> Node Level (site|cell reference)"
+    format: xlsx
+    protocol: local
+    source_uri: "/opt/airflow/data/fault/"
+    file_pattern: "Alarm_Equipment_Type*.xlsx"
+    target_table: "ran.alarm_node_level"
+    pk_columns: ["equipment_type", "tech"]
+    filters: []
+    bool_columns: []
+    schema:
+      expected_columns:
+        equipment_type: ["Equipment Type"]
+        tech: ["Tech", "Technology"]
+        node_level: ["Node Level"]
+      sheet_hints: ["Sheet1"]
+
+  - source_id: fault_alarm_library
+    source_name: "Alarm Library"
+    format: xlsx
+    protocol: local
+    source_uri: "/opt/airflow/data/fault/"
+    file_pattern: "Alarm Vs KPI Impact_*.xlsx"
+    target_table: "ran.alarm_vs_kpi"
+    # Upsert by alarm_code (the table's PRIMARY KEY), NOT truncate-reload: a reissued
+    # library is a revision of a catalogue, and a reissue that omits an alarm should
+    # not silently delete flags alarm_gold is still joining on.
+    pk_columns: ["alarm_code"]
+    filters: []
+    bool_columns: ["flag_block_progress"]
+    schema:
+      # 208 rows in the real file; 15 have a literal #N/A alarm code (dropped by the
+      # loader's NOT-NULL pk guard), 8 codes repeat and collapse on conflict -> 185
+      # rows land. flag_block_progress casts to bool 46 true / 162 false across the
+      # 208 raw rows.
+      #
+      # `impact` matches nothing in the 9-Apr-26 issue (the workbook has no Impact
+      # column despite its file name) -- kept mapped anyway so a reissue that starts
+      # carrying it lands automatically; loads null until then.
+      expected_columns:
+        alarm_code: ["Alarm Code"]
+        flag_block_progress: ["Flag - Block progress", "Flag Block Progress"]
+        impact: ["Impact"]
+        alarm_name: ["Alarm Name"]
+        count: ["# Count", "Count"]
+        technology: ["Technology"]
+        vendor: ["Vendor", " Vendor"]
+        alarm_description: ["Alarm Description", " Alarm Description"]
+        probable_cause: ["Probable Cause", " Probable Cause"]
+        classification: ["Classification", " Classification"]
+        perceived_severity: ["Perceived Severity", " Perceived Severity"]
+        availability: ["Availability"]
+        accessibility: ["Accessibility"]
+        retainability: ["Retainability"]
+        intra_hosr: ["Intra HOSR"]
+        inter_hosr: ["Inter HOSR"]
+        rlf: ["RLF"]
+        user_thpt: ["User THPT"]
+        x2_rate: ["X2 Rate"]
+        ho_attempt_towards_kddi: ["HO Attempt towards KDDI"]
+        remarks: ["Remarks"]
+      sheet_hints: ["Data", "Sheet1"]

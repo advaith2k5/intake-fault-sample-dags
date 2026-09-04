@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Intake Agent — 4G On-Air · data model &amp; flow</title><style>:root{--bg:#fbfaf7;--card:#fff;--ink:#1c1a17;--muted:#6b655c;--line:#e7e2d8;--accent:#c2410c;--accent-soft:#fde7d3;--code-bg:#f4f1ea;--th:#f6f2ea}
+@media (prefers-color-scheme:dark){:root{--bg:#14130f;--card:#1c1a16;--ink:#ece7de;--muted:#a49c8d;--line:#2c2822;--accent:#f59e0b;--accent-soft:#3a2a12;--code-bg:#221f19;--th:#221f19}}
+:root[data-theme=light]{--bg:#fbfaf7;--card:#fff;--ink:#1c1a17;--muted:#6b655c;--line:#e7e2d8;--accent:#c2410c;--accent-soft:#fde7d3;--code-bg:#f4f1ea;--th:#f6f2ea}
+:root[data-theme=dark]{--bg:#14130f;--card:#1c1a16;--ink:#ece7de;--muted:#a49c8d;--line:#2c2822;--accent:#f59e0b;--accent-soft:#3a2a12;--code-bg:#221f19;--th:#221f19}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+h1,h2,h3{line-height:1.25;text-wrap:balance}
+h1{font-size:2rem;margin:.2em 0 .1em;letter-spacing:-.01em}
+h2{font-size:1.4rem;margin:2.2em 0 .5em;padding-top:.6em;border-top:1px solid var(--line)}
+h3{font-size:1.1rem;margin:1.6em 0 .4em;color:var(--accent)}
+a{color:var(--accent)}
+blockquote{margin:1.2em 0;padding:.6em 1.1em;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 8px 8px 0}
+blockquote p{margin:.3em 0}
+code{font:.86em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code-bg);padding:.12em .4em;border-radius:5px}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow-x:auto;border:1px solid var(--line)}
+pre code{background:none;padding:0}
+hr{border:none;border-top:1px solid var(--line);margin:2em 0}
+table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.9rem;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--th);font-weight:600}
+tr:nth-child(even) td{background:color-mix(in srgb,var(--card) 60%,var(--bg))}
+figure.diagram{margin:1.4em 0;padding:22px;background:var(--card);border:1px solid var(--line);border-radius:14px}
+.eyebrow{font:600 .72rem/1 ui-monospace,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
+</style></head><body><main class="wrap"><div class="eyebrow">NS-QAW · Hinode SiteCert · Intake</div>
+<h1 id="intake-agent-4g-on-air-data-model-flow-real-client-data">Intake Agent — 4G On-Air · data model &amp; flow (real client data)</h1>
+<blockquote>
+<p><strong>Status:</strong> design / reference only. This documents the <strong>data model</strong> and the <strong>logical flow</strong> for the
+4G intake, derived from the real client files. It is <em>not</em> an ingestion spec — the two Excel files are
+treated purely as the <strong>schema reference</strong> for our tables. Nothing here inserts or stores data yet.</p>
+<p><strong>Scope:</strong> 4G only (5G intake + ACS sheets are out of scope for now).
+<strong>Supersedes:</strong> the synthetic single-CSV model (<code>ns_site</code> / <code>ns_site_cell</code> / <code>ns_cluster_site</code>) — see
+<em>§6 Migration</em>.</p>
+</blockquote>
+<hr />
+<h2 id="1-what-changed">1. What changed</h2>
+<p>Previously the whole intake came from <strong>one synthetic CSV</strong> (<code>…CellPlan_flat.csv</code>, one row per cell, all
+fields in one file). The real client data is <strong>two files that must be joined</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Reference file</th>
+<th>Grain</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>4G On-Air</strong> — <code>4G_On-Air_15th_Jul_2026_v1.xlsx</code> → sheet <strong><code>4G</code></strong></td>
+<td>one row per <strong>site</strong> (<code>SARF ID</code>)</td>
+<td><em>which sites are new &amp; on-air</em></td>
+</tr>
+<tr>
+<td><strong>ECGI</strong> — <code>ECGI_21th Jul'2026.xlsx</code> → sheet <strong><code>ECGI</code></strong></td>
+<td>one row per <strong>cell</strong> (<code>ECGI</code>)</td>
+<td><em>the cells + full RF detail of each site</em></td>
+</tr>
+</tbody>
+</table>
+<p>The 4G file has the <strong>site</strong>, the ECGI file has its <strong>cells</strong>. The join is <code>SARF ID</code> (4G) = <code>Site ID</code> (ECGI).
+So the intake model becomes <strong>two tables</strong> (site + cell) instead of the old one.</p>
+<blockquote>
+<p>⚠️ <strong>Format note:</strong> the "4G" file is actually an <strong><code>.xlsb</code></strong> (Excel <em>binary</em>) with an <code>.xlsx</code> extension —
+it needs <code>pyxlsb</code>, not <code>openpyxl</code>. The ECGI file is a normal <code>.xlsx</code>.</p>
+</blockquote>
+<hr />
+<h2 id="2-the-flow">2. The flow</h2>
+<figure class="diagram"><svg style="max-width:100%;height:auto;display:block;margin:0 auto;" id="my-svg" width="100%" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="flowchart" style="max-width: 706.664px; background-color: transparent;" viewBox="0 0 706.6640625 1476" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#my-svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;fill:#333;}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#my-svg .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#my-svg .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#my-svg .error-icon{fill:#552222;}#my-svg .error-text{fill:#552222;stroke:#552222;}#my-svg .edge-thickness-normal{stroke-width:1px;}#my-svg .edge-thickness-thick{stroke-width:3.5px;}#my-svg .edge-pattern-solid{stroke-dasharray:0;}#my-svg .edge-thickness-invisible{stroke-width:0;fill:none;}#my-svg .edge-pattern-dashed{stroke-dasharray:3;}#my-svg .edge-pattern-dotted{stroke-dasharray:2;}#my-svg .marker{fill:#333333;stroke:#333333;}#my-svg .marker.cross{stroke:#333333;}#my-svg svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;}#my-svg p{margin:0;}#my-svg .label{font-family:"trebuchet ms",verdana,arial,sans-serif;color:#333;}#my-svg .cluster-label text{fill:#333;}#my-svg .cluster-label span{color:#333;}#my-svg .cluster-label span p{background-color:transparent;}#my-svg .label text,#my-svg span{fill:#333;color:#333;}#my-svg .node rect,#my-svg .node circle,#my-svg .node ellipse,#my-svg .node polygon,#my-svg .node path{fill:#ECECFF;stroke:#9370DB;stroke-width:1px;}#my-svg .rough-node .label text,#my-svg .node .label text,#my-svg .image-shape .label,#my-svg .icon-shape .label{text-anchor:middle;}#my-svg .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#my-svg .rough-node .label,#my-svg .node .label,#my-svg .image-shape .label,#my-svg .icon-shape .label{text-align:center;}#my-svg .node.clickable{cursor:pointer;}#my-svg .root .anchor path{fill:#333333!important;stroke-width:0;stroke:#333333;}#my-svg .arrowheadPath{fill:#333333;}#my-svg .edgePath .path{stroke:#333333;stroke-width:1px;}#my-svg .flowchart-link{stroke:#333333;fill:none;}#my-svg .edgeLabel{background-color:rgba(232,232,232, 0.8);text-align:center;}#my-svg .edgeLabel p{background-color:rgba(232,232,232, 0.8);}#my-svg .edgeLabel rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#my-svg .labelBkg{background-color:rgba(232, 232, 232, 0.5);}#my-svg .cluster rect{fill:#ffffde;stroke:#aaaa33;stroke-width:1px;}#my-svg .cluster text{fill:#333;}#my-svg .cluster span{color:#333;}#my-svg div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:12px;background:hsl(80, 100%, 96.2745098039%);border:1px solid #aaaa33;border-radius:2px;pointer-events:none;z-index:100;}#my-svg .flowchartTitleText{text-anchor:middle;font-size:18px;fill:#333;}#my-svg rect.text{fill:none;stroke-width:0;}#my-svg .icon-shape,#my-svg .image-shape{background-color:rgba(232,232,232, 0.8);text-align:center;}#my-svg .icon-shape p,#my-svg .image-shape p{background-color:rgba(232,232,232, 0.8);padding:2px;}#my-svg .icon-shape .label rect,#my-svg .image-shape .label rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#my-svg .label-icon{display:inline-block;height:1em;overflow:visible;vertical-align:-0.125em;}#my-svg .node .label-icon path{fill:currentColor;stroke:revert;stroke-width:revert;}#my-svg .node .neo-node{stroke:#9370DB;}#my-svg [data-look="neo"].node rect,#my-svg [data-look="neo"].cluster rect,#my-svg [data-look="neo"].node polygon{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg [data-look="neo"].swimlane.cluster rect{filter:none;}#my-svg [data-look="neo"].node path{stroke:#9370DB;stroke-width:1px;}#my-svg [data-look="neo"].node .outer-path{filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg [data-look="neo"].node .neo-line path{stroke:#9370DB;filter:none;}#my-svg [data-look="neo"].node circle{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg [data-look="neo"].node circle .state-start{fill:#000000;}#my-svg [data-look="neo"].icon-shape .icon{fill:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg [data-look="neo"].icon-shape .icon-neo path{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#my-svg :root{--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif;}#my-svg .file1&gt;*{fill:rgb(58, 42, 18)!important;stroke:rgb(245, 158, 11)!important;color:rgb(255, 237, 213)!important;font-size:13px!important;}#my-svg .file1 span{fill:rgb(58, 42, 18)!important;stroke:rgb(245, 158, 11)!important;color:rgb(255, 237, 213)!important;font-size:13px!important;}#my-svg .file1 tspan{fill:rgb(255, 237, 213)!important;}#my-svg .file2&gt;*{fill:rgb(15, 43, 37)!important;stroke:rgb(45, 212, 191)!important;color:rgb(204, 251, 241)!important;font-size:13px!important;}#my-svg .file2 span{fill:rgb(15, 43, 37)!important;stroke:rgb(45, 212, 191)!important;color:rgb(204, 251, 241)!important;font-size:13px!important;}#my-svg .file2 tspan{fill:rgb(204, 251, 241)!important;}#my-svg .step&gt;*{fill:rgb(30, 41, 59)!important;stroke:rgb(148, 163, 184)!important;color:rgb(226, 232, 240)!important;font-size:13px!important;}#my-svg .step span{fill:rgb(30, 41, 59)!important;stroke:rgb(148, 163, 184)!important;color:rgb(226, 232, 240)!important;font-size:13px!important;}#my-svg .step tspan{fill:rgb(226, 232, 240)!important;}#my-svg .out&gt;*{fill:rgb(49, 46, 129)!important;stroke:rgb(165, 180, 252)!important;color:rgb(224, 231, 255)!important;font-size:13px!important;}#my-svg .out span{fill:rgb(49, 46, 129)!important;stroke:rgb(165, 180, 252)!important;color:rgb(224, 231, 255)!important;font-size:13px!important;}#my-svg .out tspan{fill:rgb(224, 231, 255)!important;}</style><g><marker id="my-svg_flowchart-v2-pointEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-pointStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-pointEnd-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="11.5" refY="7" markerUnits="userSpaceOnUse" markerWidth="10.5" markerHeight="14" orient="auto"><path d="M 0 0 L 11.5 7 L 0 14 z" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-pointStart-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="1" refY="7" markerUnits="userSpaceOnUse" markerWidth="11.5" markerHeight="14" orient="auto"><polygon points="0,7 11.5,14 11.5,0" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-circleEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-circleStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-circleEnd-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refY="5" refX="12.25" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-circleStart-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-2" refY="5" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-crossEnd" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-crossStart" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="my-svg_flowchart-v2-crossEnd-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="17.7" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5;"/></marker><marker id="my-svg_flowchart-v2-crossStart-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="-3.5" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5; stroke-dasharray: 1, 0;"/></marker><g class="root"><g class="clusters"/><g class="edgePaths"><path d="M183.664,784.75L183.664,816.208C183.664,847.667,183.664,910.583,195.201,945.992C206.737,981.401,229.811,989.303,241.347,993.253L252.884,997.204" id="my-svg-L_S1_S2_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_S1_S2_0" data-points="W3sieCI6MTgzLjY2NDA2MjUsInkiOjc4NC43NX0seyJ4IjoxODMuNjY0MDYyNSwieSI6OTczLjV9LHsieCI6MjU2LjY2ODI2NDE4MDY3MjMsInkiOjk5OC41fV0=" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M357.414,1067.5L357.414,1071.667C357.414,1075.833,357.414,1084.167,357.414,1091.833C357.414,1099.5,357.414,1106.5,357.414,1110L357.414,1113.5" id="my-svg-L_S2_S3_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_S2_S3_0" data-points="W3sieCI6MzU3LjQxNDA2MjUsInkiOjEwNjcuNX0seyJ4IjozNTcuNDE0MDYyNSwieSI6MTA5Mi41fSx7IngiOjM1Ny40MTQwNjI1LCJ5IjoxMTE3LjV9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M357.414,1225.5L357.414,1229.667C357.414,1233.833,357.414,1242.167,357.414,1249.833C357.414,1257.5,357.414,1264.5,357.414,1268L357.414,1271.5" id="my-svg-L_S3_OUT_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_S3_OUT_0" data-points="W3sieCI6MzU3LjQxNDA2MjUsInkiOjEyMjUuNX0seyJ4IjozNTcuNDE0MDYyNSwieSI6MTI1MC41fSx7IngiOjM1Ny40MTQwNjI1LCJ5IjoxMjc1LjV9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M357.414,1383.5L357.414,1387.667C357.414,1391.833,357.414,1400.167,357.484,1407.917C357.555,1415.667,357.695,1422.834,357.765,1426.417L357.836,1430.001" id="my-svg-L_OUT_LOCK_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_OUT_LOCK_0" data-points="W3sieCI6MzU3LjQxNDA2MjUsInkiOjEzODMuNX0seyJ4IjozNTcuNDE0MDYyNSwieSI6MTQwOC41fSx7IngiOjM1Ny45MTQwNjI1LCJ5IjoxNDM0LjAwMDAwMDAwMDAwMDJ9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M183.664,463L183.664,467.167C183.664,471.333,183.664,479.667,183.664,514.625C183.664,549.583,183.664,611.167,183.664,641.958L183.664,672.75" id="my-svg-L_F1_S1_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_F1_S1_0" data-points="W3sieCI6MTgzLjY2NDA2MjUsInkiOjQ2M30seyJ4IjoxODMuNjY0MDYyNSwieSI6NDg4fSx7IngiOjE4My42NjQwNjI1LCJ5Ijo2NzYuNzV9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/><path d="M531.164,948.5L531.164,952.667C531.164,956.833,531.164,965.167,519.627,973.284C508.091,981.401,485.017,989.303,473.481,993.253L461.944,997.204" id="my-svg-L_F2_S2_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_F2_S2_0" data-points="W3sieCI6NTMxLjE2NDA2MjUsInkiOjk0OC41fSx7IngiOjUzMS4xNjQwNjI1LCJ5Ijo5NzMuNX0seyJ4Ijo0NTguMTU5ODYwODE5MzI3NywieSI6OTk4LjV9XQ==" data-look="classic" marker-end="url(#my-svg_flowchart-v2-pointEnd)"/></g><g class="edgeLabels"><g class="edgeLabel"><g class="label" data-id="L_S1_S2_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_S2_S3_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_S3_OUT_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_OUT_LOCK_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_F1_S1_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_F2_S2_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g></g><g class="nodes"><g class="root" transform="translate(355.6640625, 505)"><g class="clusters"><g class="cluster" id="my-svg-F2" data-look="classic"><rect style="" x="8" y="8" width="335" height="435.5"/><g class="cluster-label" transform="translate(12.6875, 8)"><foreignObject width="325.625" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>FILE 2  —  ECGI (sheet 'ECGI')  —  1 row per CELL</p></span></div></foreignObject></g></g></g><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="node default file2" id="my-svg-flowchart-F2a-3" data-look="classic" transform="translate(175.5, 77.5)"><rect class="basic label-container" style="fill:#0f2b25 !important;stroke:#2dd4bf !important" x="-56.328125" y="-34.5" width="112.65625" height="69"/><g class="label" style="color:#ccfbf1 !important;font-size:13px !important" transform="translate(-26.328125, -19.5)"><rect/><foreignObject width="52.65625" height="39"><div style="color: rgb(204, 251, 241) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ccfbf1 !important;font-size:13px !important" class="nodeLabel"><p>JOIN KEY<br />Site ID</p></span></div></foreignObject></g></g><g class="node default file2" id="my-svg-flowchart-F2b-4" data-look="classic" transform="translate(175.5, 196.5)"><rect class="basic label-container" style="fill:#0f2b25 !important;stroke:#2dd4bf !important" x="-93.1328125" y="-34.5" width="186.265625" height="69"/><g class="label" style="color:#ccfbf1 !important;font-size:13px !important" transform="translate(-63.1328125, -19.5)"><rect/><foreignObject width="126.265625" height="39"><div style="color: rgb(204, 251, 241) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ccfbf1 !important;font-size:13px !important" class="nodeLabel"><p>TRANSFORM<br />CellID  -&gt;  'Sec' + CellID</p></span></div></foreignObject></g></g><g class="node default file2" id="my-svg-flowchart-F2d-5" data-look="classic" transform="translate(175.5, 344.75)"><rect class="basic label-container" style="fill:#0f2b25 !important;stroke:#2dd4bf !important" x="-130" y="-63.75" width="260" height="127.5"/><g class="label" style="color:#ccfbf1 !important;font-size:13px !important" transform="translate(-100, -48.75)"><rect/><foreignObject width="200" height="97.5"><div style="color: rgb(204, 251, 241) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ccfbf1 !important;font-size:13px !important" class="nodeLabel"><p>CELL INFO (stored)<br />ECGI, PCI, RSI, Azimuth, TAC, DL-EARFCN,<br />Mech/Elec Tilt, Ant Height, Lat/Long, ...</p></span></div></foreignObject></g></g></g></g><g class="root" transform="translate(8.1640625, 0)"><g class="clusters"><g class="cluster" id="my-svg-F1" data-look="classic"><rect style="" x="-0.1640625" y="8" width="351.328125" height="455"/><g class="cluster-label" transform="translate(3.8359375, 8)"><foreignObject width="343.328125" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>FILE 1  —  4G On-Air (sheet '4G')  —  1 row per SITE</p></span></div></foreignObject></g></g></g><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="node default file1" id="my-svg-flowchart-F1a-0" data-look="classic" transform="translate(175.5, 87.25)"><rect class="basic label-container" style="fill:#3a2a12 !important;stroke:#f59e0b !important" x="-64.53125" y="-44.25" width="129.0625" height="88.5"/><g class="label" style="color:#ffedd5 !important;font-size:13px !important" transform="translate(-34.53125, -29.25)"><rect/><foreignObject width="69.0625" height="58.5"><div style="color: rgb(255, 237, 213) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ffedd5 !important;font-size:13px !important" class="nodeLabel"><p>FILTER<br />Date of Intg<br />Status</p></span></div></foreignObject></g></g><g class="node default file1" id="my-svg-flowchart-F1b-1" data-look="classic" transform="translate(175.5, 216)"><rect class="basic label-container" style="fill:#3a2a12 !important;stroke:#f59e0b !important" x="-56.328125" y="-34.5" width="112.65625" height="69"/><g class="label" style="color:#ffedd5 !important;font-size:13px !important" transform="translate(-26.328125, -19.5)"><rect/><foreignObject width="52.65625" height="39"><div style="color: rgb(255, 237, 213) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ffedd5 !important;font-size:13px !important" class="nodeLabel"><p>JOIN KEY<br />SARF ID</p></span></div></foreignObject></g></g><g class="node default file1" id="my-svg-flowchart-F1d-2" data-look="classic" transform="translate(175.5, 364.25)"><rect class="basic label-container" style="fill:#3a2a12 !important;stroke:#f59e0b !important" x="-130" y="-63.75" width="260" height="127.5"/><g class="label" style="color:#ffedd5 !important;font-size:13px !important" transform="translate(-100, -48.75)"><rect/><foreignObject width="200" height="97.5"><div style="color: rgb(255, 237, 213) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#ffedd5 !important;font-size:13px !important" class="nodeLabel"><p>SITE INFO (stored on every cell row)<br />GC Name, Site Type, Bandwith,<br />Locked status, Donor SARF ID, Phase, ...</p></span></div></foreignObject></g></g></g></g><g class="node default step" id="my-svg-flowchart-S1-7" data-look="classic" transform="translate(183.6640625, 730.75)"><rect class="basic label-container" style="fill:#1e293b !important;stroke:#94a3b8 !important" x="-130" y="-54" width="260" height="108"/><g class="label" style="color:#e2e8f0 !important;font-size:13px !important" transform="translate(-100, -39)"><rect/><foreignObject width="200" height="78"><div style="color: rgb(226, 232, 240) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2e8f0 !important;font-size:13px !important" class="nodeLabel"><p>STEP 1  ·  SELECT SITES  (from File 1)<br />Date of Intg = latest   AND   Status = On-Air</p></span></div></foreignObject></g></g><g class="node default step" id="my-svg-flowchart-S2-9" data-look="classic" transform="translate(357.4140625, 1033)"><rect class="basic label-container" style="fill:#1e293b !important;stroke:#94a3b8 !important" x="-128.8125" y="-34.5" width="257.625" height="69"/><g class="label" style="color:#e2e8f0 !important;font-size:13px !important" transform="translate(-98.8125, -19.5)"><rect/><foreignObject width="197.625" height="39"><div style="color: rgb(226, 232, 240) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2e8f0 !important;font-size:13px !important" class="nodeLabel"><p>STEP 2  ·  FIND ITS CELLS  (in File 2)<br />match  4G.SARF ID = ECGI.Site ID</p></span></div></foreignObject></g></g><g class="node default step" id="my-svg-flowchart-S3-13" data-look="classic" transform="translate(357.4140625, 1171.5)"><rect class="basic label-container" style="fill:#1e293b !important;stroke:#94a3b8 !important" x="-130" y="-54" width="260" height="108"/><g class="label" style="color:#e2e8f0 !important;font-size:13px !important" transform="translate(-100, -39)"><rect/><foreignObject width="200" height="78"><div style="color: rgb(226, 232, 240) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e2e8f0 !important;font-size:13px !important" class="nodeLabel"><p>STEP 3  ·  ONE ROW PER CELL<br />cell_id = 'Sec' + CellID<br />row = site's 4G info  +  that cell's ECGI info</p></span></div></foreignObject></g></g><g class="node default out" id="my-svg-flowchart-OUT-15" data-look="classic" transform="translate(357.4140625, 1329.5)"><rect class="basic label-container" style="fill:#312e81 !important;stroke:#a5b4fc !important" x="-130" y="-54" width="260" height="108"/><g class="label" style="color:#e0e7ff !important;font-size:13px !important" transform="translate(-100, -39)"><rect/><foreignObject width="200" height="78"><div style="color: rgb(224, 231, 255) !important; font-size: 13px !important; display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e0e7ff !important;font-size:13px !important" class="nodeLabel"><p>STORED  ·  CELL-WISE<br />a site with 3 cells  -&gt;  3 rows<br />each row = 4G site info + ECGI cell info</p></span></div></foreignObject></g></g><g class="node default out" id="my-svg-flowchart-LOCK-17" data-look="classic" transform="translate(357.4140625, 1450.75)"><g class="basic label-container outer-path"><path d="M-71.4921875 -17.25 C-32.77117270061492 -17.25, 5.949842098770162 -17.25, 71.4921875 -17.25 C71.4921875 -17.25, 71.4921875 -17.25, 71.4921875 -17.25 C71.71455417525831 -17.242869133534942, 71.93692085051663 -17.235738267069884, 72.5973987946673 -17.2145580249433 C72.9859037522675 -17.177079418929182, 73.37440870986772 -17.139600812915063, 73.69806853905773 -17.108377738450997 C74.06774261092131 -17.04861170137734, 74.43741668278489 -16.98884566430368, 74.78967384509868 -16.93189545809588 C75.21174157067172 -16.835561253983137, 75.63380929624478 -16.739227049870397, 75.867729072439 -16.685836387423258 C76.13771742451561 -16.6057052617247, 76.40770577659222 -16.525574136026144, 76.92780426090745 -16.371211635934035 C77.28755135610551 -16.238821379435457, 77.64729845130356 -16.10643112293688, 77.9655433341692 -15.989314064218876 C78.36823643294575 -15.811053774856848, 78.77092953172232 -15.63279348549482, 78.97668199977788 -15.54171297131673 C79.19772613997142 -15.426394384963286, 79.41877028016498 -15.311075798609842, 79.95706527206792 -15.030247646128469 C80.33479925564006 -14.801263085475751, 80.71253323921222 -14.572278524823034, 80.90266454588196 -14.457019809384253 C81.17990266462192 -14.263630499195987, 81.4571407833619 -14.070241189007719, 81.80959415097348 -13.824384977222252 C82.09532869737664 -13.596519280181344, 82.3810632437798 -13.368653583140436, 82.67412731905935 -13.13494278186757 C82.88234382373521 -12.94584606142777, 83.09056032841109 -12.756749340987973, 83.49271149791014 -12.391526289185801 C83.664376154953 -12.21426843685858, 83.83604081199589 -12.03701058453136, 84.26198294954919 -11.597190357007719 C84.5049029260213 -11.311842730105333, 84.74782290249343 -11.026495103202949, 84.97878057257351 -10.755199082063154 C85.12239814784303 -10.562764615032274, 85.26601572311255 -10.370330148001392, 85.64015889179748 -9.86901238710743 C85.80723867428952 -9.612332973996068, 85.97431845678155 -9.355653560884708, 86.24340016184222 -8.94227180335656 C86.38128280712378 -8.697447204527313, 86.51916545240535 -8.452622605698064, 86.78602553493425 -7.978785506654408 C86.96366813270495 -7.609906851440872, 87.14131073047564 -7.241028196227335, 87.26580524702277 -6.982512668861298 C87.39585505896895 -6.661287119012159, 87.52590487091513 -6.340061569163019, 87.68076778035837 -5.957547188767565 C87.76070943680756 -5.716775656515824, 87.84065109325677 -5.476004124264084, 88.0292079648824 -4.908100869385314 C88.13850882554534 -4.491289316384872, 88.24780968620827 -4.074477763384431, 88.30969398513646 -3.838486110746425 C88.36201122533623 -3.5698481395732675, 88.41432846553599 -3.30121016840011, 88.52107326389927 -2.753098189325798 C88.55882191348562 -2.460327117448018, 88.59657056307198 -2.167556045570238, 88.66247719837367 -1.6563971969075135 C88.68678994783424 -1.2777064991609417, 88.71110269729482 -0.8990158014143698, 88.73332472946187 -0.5528897131110516 C88.73332472946187 -0.26270560877810534, 88.73332472946187 0.027478495554840943, 88.73332472946187 0.5528897131110474 C88.7185300363569 0.7833290002824337, 88.7037353432519 1.01376828745382, 88.66247719837367 1.6563971969075018 C88.60602345246436 2.0942413021270516, 88.54956970655505 2.5320854073466017, 88.52107326389927 2.753098189325786 C88.44352693946091 3.1512821758952745, 88.36598061502255 3.5494661624647623, 88.30969398513646 3.8384861107464214 C88.25055088785685 4.064024373454099, 88.19140779057723 4.289562636161775, 88.0292079648824 4.908100869385303 C87.93888552083719 5.180137679922367, 87.84856307679196 5.452174490459429, 87.68076778035837 5.9575471887675535 C87.59312368367074 6.174029802069333, 87.50547958698311 6.390512415371113, 87.26580524702277 6.982512668861292 C87.15630668844629 7.209888768639177, 87.04680812986982 7.43726486841706, 86.78602553493425 7.978785506654404 C86.62138213173301 8.271126540990615, 86.45673872853177 8.563467575326825, 86.24340016184222 8.942271803356554 C86.08598408259142 9.184105173221713, 85.92856800334063 9.425938543086872, 85.6401588917975 9.869012387107421 C85.39874197354696 10.192489064029441, 85.15732505529641 10.515965740951462, 84.97878057257351 10.75519908206315 C84.78002908989019 10.988663882902715, 84.58127760720689 11.22212868374228, 84.26198294954919 11.597190357007708 C83.98884291213044 11.879229870856692, 83.7157028747117 12.161269384705676, 83.49271149791014 12.391526289185798 C83.27955640075758 12.585108108644926, 83.06640130360503 12.778689928104052, 82.67412731905937 13.13494278186756 C82.4215392865223 13.336375016166027, 82.16895125398524 13.537807250464494, 81.80959415097348 13.82438497722225 C81.58843697896711 13.978654646674217, 81.36727980696075 14.132924316126182, 80.90266454588198 14.457019809384246 C80.63731570758425 14.61787583452319, 80.37196686928651 14.778731859662134, 79.95706527206792 15.030247646128467 C79.5691389523133 15.23262855866579, 79.18121263255868 15.43500947120311, 78.97668199977788 15.541712971316729 C78.65297061326928 15.685010399566986, 78.32925922676067 15.828307827817243, 77.96554333416921 15.989314064218874 C77.59258638267599 16.126565669944647, 77.21962943118277 16.26381727567042, 76.92780426090746 16.37121163593403 C76.68227434462182 16.444083626274782, 76.43674442833617 16.51695561661553, 75.86772907243902 16.685836387423254 C75.60044693084484 16.746841792063147, 75.33316478925067 16.807847196703044, 74.78967384509868 16.931895458095877 C74.55375422517831 16.970037112660624, 74.31783460525796 17.00817876722537, 73.69806853905774 17.108377738450994 C73.43208036563756 17.134037297643257, 73.16609219221738 17.15969685683552, 72.5973987946673 17.2145580249433 C72.20672761406702 17.22708608930983, 71.81605643346673 17.239614153676357, 71.4921875 17.25 C71.4921875 17.25, 71.4921875 17.25, 71.4921875 17.25 C37.956363368067024 17.25, 4.420539236134047 17.25, -71.4921875 17.25 C-71.73470797265315 17.242222840479478, -71.97722844530631 17.234445680958952, -72.59739879466728 17.2145580249433 C-72.89180579861386 17.1861569353488, -73.18621280256042 17.157755845754302, -73.69806853905773 17.108377738450994 C-74.00551668060204 17.058671907222056, -74.31296482214634 17.008966075993122, -74.78967384509868 16.931895458095877 C-75.21071342985289 16.83579592041579, -75.63175301460709 16.7396963827357, -75.86772907243899 16.685836387423258 C-76.0902985492463 16.619778934997875, -76.31286802605361 16.553721482572488, -76.92780426090745 16.37121163593404 C-77.19615538653875 16.272455941091106, -77.46450651217006 16.173700246248174, -77.96554333416921 15.989314064218876 C-78.26735030627385 15.855713070453884, -78.5691572783785 15.72211207668889, -78.97668199977788 15.541712971316732 C-79.28773234823686 15.379438203762943, -79.59878269669582 15.217163436209153, -79.95706527206792 15.03024764612847 C-80.20451004922315 14.88024516807005, -80.45195482637838 14.73024269001163, -80.90266454588195 14.457019809384258 C-81.22228067781147 14.234069431709585, -81.54189680974099 14.01111905403491, -81.80959415097348 13.824384977222254 C-81.98739495424333 13.68259356809264, -82.16519575751316 13.540802158963027, -82.67412731905935 13.134942781867572 C-82.9770679554605 12.859820111258067, -83.28000859186163 12.58469744064856, -83.49271149791014 12.391526289185808 C-83.65504786109516 12.223900666133996, -83.81738422428016 12.056275043082184, -84.26198294954919 11.597190357007715 C-84.52209636293101 11.291646340776916, -84.78220977631284 10.986102324546119, -84.97878057257351 10.755199082063156 C-85.13786781096444 10.542036675764889, -85.29695504935536 10.328874269466624, -85.64015889179748 9.869012387107432 C-85.86495844500753 9.523659906244564, -86.08975799821758 9.178307425381696, -86.24340016184222 8.942271803356567 C-86.42128670301442 8.62641623653977, -86.59917324418662 8.310560669722973, -86.78602553493425 7.97878550665441 C-86.9161176213506 7.708646505686147, -87.04620970776693 7.438507504717885, -87.26580524702277 6.9825126688612995 C-87.37714152222682 6.707509916566833, -87.48847779743087 6.4325071642723675, -87.68076778035837 5.957547188767567 C-87.75902584234262 5.721846374799875, -87.83728390432688 5.486145560832183, -88.0292079648824 4.90810086938531 C-88.10038643423445 4.636666516802165, -88.1715649035865 4.365232164219019, -88.30969398513645 3.8384861107464276 C-88.35924301038119 3.5840623383048977, -88.40879203562592 3.329638565863368, -88.52107326389927 2.7530981893258 C-88.57118679503562 2.364427537868286, -88.62130032617196 1.975756886410772, -88.66247719837367 1.6563971969075233 C-88.68974350530772 1.2317024574429454, -88.71700981224176 0.8070077179783676, -88.73332472946187 0.5528897131110537 C-88.73332472946187 0.32225696362452627, -88.73332472946187 0.09162421413799876, -88.73332472946187 -0.5528897131110454 C-88.70918121478485 -0.9289444424997875, -88.68503770010784 -1.3049991718885297, -88.66247719837367 -1.6563971969074995 C-88.63247598658515 -1.889080671129859, -88.60247477479663 -2.1217641453522185, -88.52107326389927 -2.753098189325792 C-88.4659683291219 -3.0360503829754335, -88.41086339434456 -3.3190025766250746, -88.30969398513646 -3.8384861107464197 C-88.22774342052834 -4.1509991311965475, -88.14579285592022 -4.463512151646675, -88.0292079648824 -4.908100869385301 C-87.95667901673737 -5.126546505279567, -87.88415006859233 -5.344992141173834, -87.68076778035837 -5.957547188767545 C-87.53927540822264 -6.307036083511712, -87.3977830360869 -6.65652497825588, -87.26580524702277 -6.982512668861291 C-87.13625641835159 -7.251523583497878, -87.0067075896804 -7.520534498134467, -86.78602553493425 -7.978785506654402 C-86.64943046285077 -8.221323888889536, -86.5128353907673 -8.46386227112467, -86.24340016184222 -8.942271803356562 C-86.10356509570451 -9.157096015916972, -85.9637300295668 -9.371920228477384, -85.64015889179748 -9.869012387107427 C-85.39732066593497 -10.194393486745712, -85.15448244007244 -10.519774586383997, -84.97878057257351 -10.75519908206315 C-84.81020426148507 -10.953218409331475, -84.64162795039663 -11.151237736599798, -84.2619829495492 -11.597190357007708 C-83.99453870151156 -11.873348500687701, -83.7270944534739 -12.149506644367696, -83.49271149791015 -12.39152628918579 C-83.19569724444912 -12.66126677561259, -82.89868299098809 -12.93100726203939, -82.67412731905937 -13.134942781867558 C-82.43979220199613 -13.321818801806135, -82.20545708493289 -13.508694821744712, -81.80959415097348 -13.824384977222248 C-81.44711088136567 -14.077237614452814, -81.08462761175788 -14.33009025168338, -80.90266454588198 -14.457019809384244 C-80.60526137562498 -14.637307358929064, -80.30785820536796 -14.817594908473882, -79.95706527206792 -15.030247646128466 C-79.5889959561539 -15.222269172481164, -79.22092664023988 -15.414290698833865, -78.97668199977788 -15.541712971316729 C-78.7479197264773 -15.642979243715159, -78.51915745317675 -15.744245516113589, -77.96554333416921 -15.98931406421887 C-77.59452107631083 -16.12585368480291, -77.22349881845246 -16.26239330538695, -76.92780426090746 -16.37121163593403 C-76.6980133939123 -16.43941235906132, -76.46822252691716 -16.507613082188605, -75.86772907243902 -16.68583638742325 C-75.46109357324191 -16.778648286570373, -75.05445807404482 -16.871460185717492, -74.78967384509868 -16.931895458095877 C-74.45967733073506 -16.985246735376997, -74.12968081637145 -17.038598012658117, -73.69806853905774 -17.108377738450994 C-73.41507603047462 -17.13567768540572, -73.1320835218915 -17.162977632360448, -72.5973987946673 -17.2145580249433 C-72.25761071933444 -17.22545436716186, -71.91782264400156 -17.236350709380417, -71.4921875 -17.25 C-71.4921875 -17.25, -71.4921875 -17.25, -71.4921875 -17.25" stroke="none" stroke-width="0" fill="#312e81" style="fill:#312e81 !important;stroke:#a5b4fc !important"/><path d="M-71.4921875 -17.25 C-28.527626144891357 -17.25, 14.436935210217285 -17.25, 71.4921875 -17.25 M-71.4921875 -17.25 C-39.64941844148902 -17.25, -7.806649382978037 -17.25, 71.4921875 -17.25 M71.4921875 -17.25 C71.4921875 -17.25, 71.4921875 -17.25, 71.4921875 -17.25 M71.4921875 -17.25 C71.4921875 -17.25, 71.4921875 -17.25, 71.4921875 -17.25 M71.4921875 -17.25 C71.88491085313494 -17.237406126454598, 72.2776342062699 -17.224812252909192, 72.5973987946673 -17.2145580249433 M71.4921875 -17.25 C71.76856215554066 -17.241137202727444, 72.04493681108133 -17.232274405454888, 72.5973987946673 -17.2145580249433 M72.5973987946673 -17.2145580249433 C72.99021025716196 -17.176663975581345, 73.38302171965661 -17.138769926219386, 73.69806853905773 -17.108377738450997 M72.5973987946673 -17.2145580249433 C73.02120823722652 -17.17367363772504, 73.44501767978575 -17.13278925050678, 73.69806853905773 -17.108377738450997 M73.69806853905773 -17.108377738450997 C74.01901527058442 -17.05648955987684, 74.3399620021111 -17.00460138130268, 74.78967384509868 -16.93189545809588 M73.69806853905773 -17.108377738450997 C74.03287820471681 -17.05424830819497, 74.3676878703759 -17.00011887793895, 74.78967384509868 -16.93189545809588 M74.78967384509868 -16.93189545809588 C75.2000108206243 -16.838238721131162, 75.61034779614994 -16.744581984166448, 75.867729072439 -16.685836387423258 M74.78967384509868 -16.93189545809588 C75.13322722897145 -16.853481640122265, 75.47678061284422 -16.77506782214865, 75.867729072439 -16.685836387423258 M75.867729072439 -16.685836387423258 C76.2382900309487 -16.57585584005174, 76.60885098945842 -16.465875292680224, 76.92780426090745 -16.371211635934035 M75.867729072439 -16.685836387423258 C76.12093855062956 -16.610685143419975, 76.37414802882012 -16.53553389941669, 76.92780426090745 -16.371211635934035 M76.92780426090745 -16.371211635934035 C77.27611551578073 -16.24302987438672, 77.62442677065403 -16.114848112839407, 77.9655433341692 -15.989314064218876 M76.92780426090745 -16.371211635934035 C77.16776761071668 -16.28290290500735, 77.40773096052591 -16.194594174080667, 77.9655433341692 -15.989314064218876 M77.9655433341692 -15.989314064218876 C78.31974164632067 -15.832520978349038, 78.67393995847215 -15.675727892479202, 78.97668199977788 -15.54171297131673 M77.9655433341692 -15.989314064218876 C78.2534307984967 -15.861874823639301, 78.54131826282419 -15.734435583059724, 78.97668199977788 -15.54171297131673 M78.97668199977788 -15.54171297131673 C79.17443031988954 -15.43854779937832, 79.37217864000121 -15.335382627439909, 79.95706527206792 -15.030247646128469 M78.97668199977788 -15.54171297131673 C79.23611199299643 -15.406368510027457, 79.49554198621497 -15.271024048738184, 79.95706527206792 -15.030247646128469 M79.95706527206792 -15.030247646128469 C80.21647740567694 -14.872990486259768, 80.47588953928597 -14.715733326391067, 80.90266454588196 -14.457019809384253 M79.95706527206792 -15.030247646128469 C80.2609073505403 -14.846056792584271, 80.56474942901266 -14.661865939040073, 80.90266454588196 -14.457019809384253 M80.90266454588196 -14.457019809384253 C81.15805270081569 -14.278872088077533, 81.4134408557494 -14.100724366770814, 81.80959415097348 -13.824384977222252 M80.90266454588196 -14.457019809384253 C81.25723024667248 -14.2096901254146, 81.611795947463 -13.962360441444945, 81.80959415097348 -13.824384977222252 M81.80959415097348 -13.824384977222252 C81.98926463024442 -13.681102551235929, 82.16893510951536 -13.537820125249604, 82.67412731905935 -13.13494278186757 M81.80959415097348 -13.824384977222252 C82.05879133343527 -13.625656855624511, 82.30798851589704 -13.42692873402677, 82.67412731905935 -13.13494278186757 M82.67412731905935 -13.13494278186757 C82.88896633581749 -12.939831671176725, 83.10380535257562 -12.744720560485877, 83.49271149791014 -12.391526289185801 M82.67412731905935 -13.13494278186757 C82.84633663119239 -12.978546840997062, 83.01854594332542 -12.822150900126552, 83.49271149791014 -12.391526289185801 M83.49271149791014 -12.391526289185801 C83.77486168798455 -12.10018305297255, 84.05701187805897 -11.808839816759301, 84.26198294954919 -11.597190357007719 M83.49271149791014 -12.391526289185801 C83.67434656555908 -12.203973169321884, 83.85598163320802 -12.016420049457967, 84.26198294954919 -11.597190357007719 M84.26198294954919 -11.597190357007719 C84.45990082051865 -11.364704763921099, 84.65781869148812 -11.132219170834478, 84.97878057257351 -10.755199082063154 M84.26198294954919 -11.597190357007719 C84.47941320163496 -11.341784410775956, 84.6968434537207 -11.086378464544191, 84.97878057257351 -10.755199082063154 M84.97878057257351 -10.755199082063154 C85.15119791765939 -10.52417554719136, 85.32361526274525 -10.293152012319567, 85.64015889179748 -9.86901238710743 M84.97878057257351 -10.755199082063154 C85.23812219231327 -10.407704938119489, 85.49746381205301 -10.060210794175823, 85.64015889179748 -9.86901238710743 M85.64015889179748 -9.86901238710743 C85.83584768460892 -9.568381851550528, 86.03153647742036 -9.267751315993625, 86.24340016184222 -8.94227180335656 M85.64015889179748 -9.86901238710743 C85.82255407686922 -9.588804402872194, 86.00494926194098 -9.308596418636956, 86.24340016184222 -8.94227180335656 M86.24340016184222 -8.94227180335656 C86.3900131021427 -8.681945681682974, 86.5366260424432 -8.42161956000939, 86.78602553493425 -7.978785506654408 M86.24340016184222 -8.94227180335656 C86.36967559206656 -8.718056990219376, 86.49595102229091 -8.493842177082193, 86.78602553493425 -7.978785506654408 M86.78602553493425 -7.978785506654408 C86.92092792601083 -7.698657805135119, 87.05583031708741 -7.418530103615831, 87.26580524702277 -6.982512668861298 M86.78602553493425 -7.978785506654408 C86.90413997121435 -7.733518352474701, 87.02225440749446 -7.488251198294994, 87.26580524702277 -6.982512668861298 M87.26580524702277 -6.982512668861298 C87.41813883038601 -6.606245772784602, 87.57047241374926 -6.229978876707907, 87.68076778035837 -5.957547188767565 M87.26580524702277 -6.982512668861298 C87.38564864962062 -6.686497147430045, 87.50549205221847 -6.390481625998792, 87.68076778035837 -5.957547188767565 M87.68076778035837 -5.957547188767565 C87.80884512336816 -5.571798637975437, 87.93692246637796 -5.186050087183308, 88.0292079648824 -4.908100869385314 M87.68076778035837 -5.957547188767565 C87.78867275434789 -5.632554599433967, 87.89657772833742 -5.307562010100369, 88.0292079648824 -4.908100869385314 M88.0292079648824 -4.908100869385314 C88.12677818917007 -4.536023316973763, 88.22434841345772 -4.163945764562213, 88.30969398513646 -3.838486110746425 M88.0292079648824 -4.908100869385314 C88.0909783300348 -4.672543695613605, 88.1527486951872 -4.436986521841897, 88.30969398513646 -3.838486110746425 M88.30969398513646 -3.838486110746425 C88.3599991724399 -3.5801796059483593, 88.41030435974335 -3.3218731011502936, 88.52107326389927 -2.753098189325798 M88.30969398513646 -3.838486110746425 C88.36074873426102 -3.5763307644168285, 88.4118034833856 -3.3141754180872325, 88.52107326389927 -2.753098189325798 M88.52107326389927 -2.753098189325798 C88.5635190974494 -2.4238966861888342, 88.60596493099953 -2.0946951830518703, 88.66247719837367 -1.6563971969075135 M88.52107326389927 -2.753098189325798 C88.57187931747647 -2.3590564705710477, 88.62268537105368 -1.9650147518162977, 88.66247719837367 -1.6563971969075135 M88.66247719837367 -1.6563971969075135 C88.68536463673044 -1.2999068700930938, 88.70825207508722 -0.9434165432786742, 88.73332472946187 -0.5528897131110516 M88.66247719837367 -1.6563971969075135 C88.68457696806138 -1.312175445408374, 88.70667673774909 -0.9679536939092344, 88.73332472946187 -0.5528897131110516 M88.73332472946187 -0.5528897131110516 C88.73332472946187 -0.21856698196858693, 88.73332472946187 0.11575574917387776, 88.73332472946187 0.5528897131110474 M88.73332472946187 -0.5528897131110516 C88.73332472946187 -0.15769863191309302, 88.73332472946187 0.23749244928486557, 88.73332472946187 0.5528897131110474 M88.73332472946187 0.5528897131110474 C88.71205422366165 0.8841950101925884, 88.69078371786145 1.2155003072741295, 88.66247719837367 1.6563971969075018 M88.73332472946187 0.5528897131110474 C88.71477007655267 0.8418934092180261, 88.69621542364348 1.1308971053250048, 88.66247719837367 1.6563971969075018 M88.66247719837367 1.6563971969075018 C88.62260068879438 1.9656715306969736, 88.58272417921509 2.2749458644864453, 88.52107326389927 2.753098189325786 M88.66247719837367 1.6563971969075018 C88.63213822731292 1.8917002653471582, 88.60179925625218 2.1270033337868144, 88.52107326389927 2.753098189325786 M88.52107326389927 2.753098189325786 C88.43925887148976 3.173197802870649, 88.35744447908026 3.5932974164155125, 88.30969398513646 3.8384861107464214 M88.52107326389927 2.753098189325786 C88.46014862226592 3.065933347685453, 88.39922398063257 3.37876850604512, 88.30969398513646 3.8384861107464214 M88.30969398513646 3.8384861107464214 C88.20167308442912 4.2504166216980686, 88.09365218372176 4.662347132649716, 88.0292079648824 4.908100869385303 M88.30969398513646 3.8384861107464214 C88.24010217732771 4.103869835201467, 88.17051036951896 4.369253559656512, 88.0292079648824 4.908100869385303 M88.0292079648824 4.908100869385303 C87.94086181034314 5.1741854108094, 87.85251565580387 5.440269952233496, 87.68076778035837 5.9575471887675535 M88.0292079648824 4.908100869385303 C87.91079459692173 5.2647430670747655, 87.79238122896108 5.621385264764228, 87.68076778035837 5.9575471887675535 M87.68076778035837 5.9575471887675535 C87.58298166731748 6.199080778544415, 87.4851955542766 6.440614368321277, 87.26580524702277 6.982512668861292 M87.68076778035837 5.9575471887675535 C87.59380839894283 6.172338542109216, 87.50684901752727 6.387129895450878, 87.26580524702277 6.982512668861292 M87.26580524702277 6.982512668861292 C87.08724599846887 7.353294769039322, 86.90868674991499 7.724076869217351, 86.78602553493425 7.978785506654404 M87.26580524702277 6.982512668861292 C87.13317260565518 7.2579271865449915, 87.0005399642876 7.53334170422869, 86.78602553493425 7.978785506654404 M86.78602553493425 7.978785506654404 C86.6386060113769 8.240543798575986, 86.49118648781952 8.502302090497569, 86.24340016184222 8.942271803356554 M86.78602553493425 7.978785506654404 C86.6617263598186 8.199491278728582, 86.53742718470293 8.42019705080276, 86.24340016184222 8.942271803356554 M86.24340016184222 8.942271803356554 C86.11411854446223 9.140883084627324, 85.98483692708224 9.339494365898096, 85.6401588917975 9.869012387107421 M86.24340016184222 8.942271803356554 C86.08014827356118 9.193070543026316, 85.91689638528014 9.44386928269608, 85.6401588917975 9.869012387107421 M85.6401588917975 9.869012387107421 C85.4697564829996 10.097336090917802, 85.2993540742017 10.32565979472818, 84.97878057257351 10.75519908206315 M85.6401588917975 9.869012387107421 C85.45645430019144 10.115159804026948, 85.2727497085854 10.361307220946474, 84.97878057257351 10.75519908206315 M84.97878057257351 10.75519908206315 C84.71815886713641 11.061340167064719, 84.4575371616993 11.367481252066286, 84.26198294954919 11.597190357007708 M84.97878057257351 10.75519908206315 C84.7108708424328 11.069901095581939, 84.44296111229208 11.384603109100725, 84.26198294954919 11.597190357007708 M84.26198294954919 11.597190357007708 C83.98508675434299 11.88310841215853, 83.70819055913678 12.16902646730935, 83.49271149791014 12.391526289185798 M84.26198294954919 11.597190357007708 C83.96947404790885 11.899229813378817, 83.6769651462685 12.201269269749925, 83.49271149791014 12.391526289185798 M83.49271149791014 12.391526289185798 C83.32354588612488 12.545158021932357, 83.15438027433962 12.698789754678916, 82.67412731905937 13.13494278186756 M83.49271149791014 12.391526289185798 C83.17365339026095 12.68128642073786, 82.85459528261177 12.971046552289923, 82.67412731905937 13.13494278186756 M82.67412731905937 13.13494278186756 C82.39112036160402 13.360633299306766, 82.10811340414868 13.586323816745974, 81.80959415097348 13.82438497722225 M82.67412731905937 13.13494278186756 C82.46573673540765 13.30112872682348, 82.25734615175593 13.467314671779402, 81.80959415097348 13.82438497722225 M81.80959415097348 13.82438497722225 C81.47399873559597 14.058481811298217, 81.13840332021846 14.292578645374183, 80.90266454588198 14.457019809384246 M81.80959415097348 13.82438497722225 C81.61449651169777 13.960476644740305, 81.41939887242205 14.096568312258361, 80.90266454588198 14.457019809384246 M80.90266454588198 14.457019809384246 C80.62452872517954 14.625627378401571, 80.34639290447711 14.794234947418895, 79.95706527206792 15.030247646128467 M80.90266454588198 14.457019809384246 C80.54591972983869 14.673280613334928, 80.1891749137954 14.889541417285608, 79.95706527206792 15.030247646128467 M79.95706527206792 15.030247646128467 C79.63487890671612 15.198332066562282, 79.31269254136434 15.366416486996098, 78.97668199977788 15.541712971316729 M79.95706527206792 15.030247646128467 C79.68166939731219 15.17392149758906, 79.40627352255645 15.317595349049652, 78.97668199977788 15.541712971316729 M78.97668199977788 15.541712971316729 C78.76935514451975 15.633490420006858, 78.56202828926162 15.725267868696987, 77.96554333416921 15.989314064218874 M78.97668199977788 15.541712971316729 C78.71984786111227 15.655405825789964, 78.46301372244666 15.769098680263202, 77.96554333416921 15.989314064218874 M77.96554333416921 15.989314064218874 C77.69648131332998 16.088331375069767, 77.42741929249074 16.18734868592066, 76.92780426090746 16.37121163593403 M77.96554333416921 15.989314064218874 C77.6714552838143 16.097541185269616, 77.3773672334594 16.20576830632036, 76.92780426090746 16.37121163593403 M76.92780426090746 16.37121163593403 C76.62773149213623 16.46027165859123, 76.327658723365 16.54933168124842, 75.86772907243902 16.685836387423254 M76.92780426090746 16.37121163593403 C76.6084017583753 16.466008622107633, 76.28899925584311 16.560805608281235, 75.86772907243902 16.685836387423254 M75.86772907243902 16.685836387423254 C75.50782166377927 16.76798290483451, 75.14791425511953 16.850129422245764, 74.78967384509868 16.931895458095877 M75.86772907243902 16.685836387423254 C75.5370000991506 16.76132311736809, 75.20627112586219 16.836809847312924, 74.78967384509868 16.931895458095877 M74.78967384509868 16.931895458095877 C74.54729964161557 16.971080639675005, 74.30492543813246 17.010265821254134, 73.69806853905774 17.108377738450994 M74.78967384509868 16.931895458095877 C74.55512647248274 16.96981525835838, 74.3205790998668 17.007735058620884, 73.69806853905774 17.108377738450994 M73.69806853905774 17.108377738450994 C73.4386961229407 17.133399083492836, 73.17932370682365 17.15842042853468, 72.5973987946673 17.2145580249433 M73.69806853905774 17.108377738450994 C73.38583698528515 17.138498340930052, 73.07360543151255 17.16861894340911, 72.5973987946673 17.2145580249433 M72.5973987946673 17.2145580249433 C72.34100045295062 17.22278022071306, 72.08460211123393 17.231002416482816, 71.4921875 17.25 M72.5973987946673 17.2145580249433 C72.22845093812657 17.226389464589126, 71.85950308158584 17.23822090423495, 71.4921875 17.25 M71.4921875 17.25 C71.4921875 17.25, 71.4921875 17.25, 71.4921875 17.25 M71.4921875 17.25 C71.4921875 17.25, 71.4921875 17.25, 71.4921875 17.25 M71.4921875 17.25 C15.46661347672773 17.25, -40.55896054654454 17.25, -71.4921875 17.25 M71.4921875 17.25 C24.071298450482146 17.25, -23.349590599035707 17.25, -71.4921875 17.25 M-71.4921875 17.25 C-71.8202655208277 17.239479176437182, -72.14834354165541 17.22895835287437, -72.59739879466728 17.2145580249433 M-71.4921875 17.25 C-71.83218550166987 17.23909692585241, -72.17218350333974 17.22819385170482, -72.59739879466728 17.2145580249433 M-72.59739879466728 17.2145580249433 C-73.01639929873444 17.174137550237774, -73.43539980280158 17.13371707553225, -73.69806853905773 17.108377738450994 M-72.59739879466728 17.2145580249433 C-72.83813889057231 17.19133411742367, -73.07887898647732 17.168110209904036, -73.69806853905773 17.108377738450994 M-73.69806853905773 17.108377738450994 C-74.10438799200504 17.04268716035289, -74.51070744495235 16.97699658225479, -74.78967384509868 16.931895458095877 M-73.69806853905773 17.108377738450994 C-74.12347301772355 17.03960164140131, -74.54887749638938 16.97082554435162, -74.78967384509868 16.931895458095877 M-74.78967384509868 16.931895458095877 C-75.18807010127273 16.84096411240268, -75.5864663574468 16.750032766709484, -75.86772907243899 16.685836387423258 M-74.78967384509868 16.931895458095877 C-75.19010501655947 16.840499656267546, -75.59053618802027 16.749103854439216, -75.86772907243899 16.685836387423258 M-75.86772907243899 16.685836387423258 C-76.21015787078404 16.58420531751989, -76.55258666912911 16.48257424761652, -76.92780426090745 16.37121163593404 M-75.86772907243899 16.685836387423258 C-76.18384575590738 16.592014615100172, -76.49996243937578 16.498192842777087, -76.92780426090745 16.37121163593404 M-76.92780426090745 16.37121163593404 C-77.23322013819825 16.258815769857602, -77.53863601548906 16.146419903781165, -77.96554333416921 15.989314064218876 M-76.92780426090745 16.37121163593404 C-77.25693810971508 16.250087337092882, -77.58607195852272 16.12896303825173, -77.96554333416921 15.989314064218876 M-77.96554333416921 15.989314064218876 C-78.3399918715585 15.823556804337846, -78.7144404089478 15.657799544456815, -78.97668199977788 15.541712971316732 M-77.96554333416921 15.989314064218876 C-78.2126685152845 15.879919077247175, -78.45979369639979 15.770524090275476, -78.97668199977788 15.541712971316732 M-78.97668199977788 15.541712971316732 C-79.31823242277045 15.363526334414995, -79.65978284576302 15.18533969751326, -79.95706527206792 15.03024764612847 M-78.97668199977788 15.541712971316732 C-79.26861848354925 15.389409894727454, -79.56055496732061 15.237106818138175, -79.95706527206792 15.03024764612847 M-79.95706527206792 15.03024764612847 C-80.20511547294012 14.879878156654957, -80.45316567381232 14.729508667181443, -80.90266454588195 14.457019809384258 M-79.95706527206792 15.03024764612847 C-80.3332546093803 14.802199459115771, -80.70944394669267 14.574151272103073, -80.90266454588195 14.457019809384258 M-80.90266454588195 14.457019809384258 C-81.1938541259571 14.253898563717588, -81.48504370603227 14.050777318050915, -81.80959415097348 13.824384977222254 M-80.90266454588195 14.457019809384258 C-81.09888863965902 14.320142375969489, -81.29511273343608 14.183264942554722, -81.80959415097348 13.824384977222254 M-81.80959415097348 13.824384977222254 C-82.11764190063147 13.578725094364898, -82.42568965028946 13.333065211507542, -82.67412731905935 13.134942781867572 M-81.80959415097348 13.824384977222254 C-82.04850193096529 13.633862380281816, -82.28740971095709 13.443339783341376, -82.67412731905935 13.134942781867572 M-82.67412731905935 13.134942781867572 C-82.84247740622035 12.982051687007171, -83.01082749338134 12.82916059214677, -83.49271149791014 12.391526289185808 M-82.67412731905935 13.134942781867572 C-82.98844331986922 12.849489306277713, -83.30275932067907 12.564035830687855, -83.49271149791014 12.391526289185808 M-83.49271149791014 12.391526289185808 C-83.79007233164356 12.084476814577572, -84.08743316537696 11.777427339969336, -84.26198294954919 11.597190357007715 M-83.49271149791014 12.391526289185808 C-83.72736753348788 12.149224666832977, -83.96202356906562 11.906923044480145, -84.26198294954919 11.597190357007715 M-84.26198294954919 11.597190357007715 C-84.4762997390979 11.34544166103301, -84.6906165286466 11.093692965058306, -84.97878057257351 10.755199082063156 M-84.26198294954919 11.597190357007715 C-84.45932374965238 11.365382624196878, -84.65666454975558 11.13357489138604, -84.97878057257351 10.755199082063156 M-84.97878057257351 10.755199082063156 C-85.12884187163553 10.554130612185627, -85.27890317069756 10.353062142308099, -85.64015889179748 9.869012387107432 M-84.97878057257351 10.755199082063156 C-85.16119599971324 10.5107790280832, -85.34361142685297 10.266358974103245, -85.64015889179748 9.869012387107432 M-85.64015889179748 9.869012387107432 C-85.80984811733258 9.60832416874837, -85.97953734286766 9.347635950389307, -86.24340016184222 8.942271803356567 M-85.64015889179748 9.869012387107432 C-85.86161501042127 9.528796319606954, -86.08307112904507 9.188580252106476, -86.24340016184222 8.942271803356567 M-86.24340016184222 8.942271803356567 C-86.44995149240593 8.575519000350459, -86.65650282296966 8.208766197344351, -86.78602553493425 7.97878550665441 M-86.24340016184222 8.942271803356567 C-86.38670662996655 8.687816657848362, -86.53001309809088 8.433361512340156, -86.78602553493425 7.97878550665441 M-86.78602553493425 7.97878550665441 C-86.90320804825427 7.73545351044127, -87.02039056157429 7.49212151422813, -87.26580524702277 6.9825126688612995 M-86.78602553493425 7.97878550665441 C-86.92080414694193 7.6989148350201395, -87.05558275894961 7.419044163385868, -87.26580524702277 6.9825126688612995 M-87.26580524702277 6.9825126688612995 C-87.38733280009953 6.682337263186303, -87.50886035317629 6.382161857511306, -87.68076778035837 5.957547188767567 M-87.26580524702277 6.9825126688612995 C-87.37166590261626 6.721034802868829, -87.47752655820976 6.459556936876358, -87.68076778035837 5.957547188767567 M-87.68076778035837 5.957547188767567 C-87.7873580036699 5.6365144189990355, -87.89394822698141 5.315481649230504, -88.0292079648824 4.90810086938531 M-87.68076778035837 5.957547188767567 C-87.76245856650593 5.711507556550323, -87.84414935265349 5.465467924333081, -88.0292079648824 4.90810086938531 M-88.0292079648824 4.90810086938531 C-88.10416361757872 4.622262479668848, -88.17911927027504 4.336424089952387, -88.30969398513645 3.8384861107464276 M-88.0292079648824 4.90810086938531 C-88.13118180810848 4.5192304094210165, -88.23315565133457 4.130359949456724, -88.30969398513645 3.8384861107464276 M-88.30969398513645 3.8384861107464276 C-88.37994527151102 3.477760602827671, -88.45019655788559 3.117035094908914, -88.52107326389927 2.7530981893258 M-88.30969398513645 3.8384861107464276 C-88.3885278649628 3.433690799384565, -88.46736174478914 3.0288954880227026, -88.52107326389927 2.7530981893258 M-88.52107326389927 2.7530981893258 C-88.5600080641328 2.451127567260473, -88.59894286436632 2.1491569451951458, -88.66247719837367 1.6563971969075233 M-88.52107326389927 2.7530981893258 C-88.56784150351787 2.3903729582774362, -88.61460974313647 2.027647727229072, -88.66247719837367 1.6563971969075233 M-88.66247719837367 1.6563971969075233 C-88.68108613673506 1.366547961064076, -88.69969507509646 1.076698725220629, -88.73332472946187 0.5528897131110537 M-88.66247719837367 1.6563971969075233 C-88.68448390697243 1.313624946986244, -88.70649061557121 0.9708526970649647, -88.73332472946187 0.5528897131110537 M-88.73332472946187 0.5528897131110537 C-88.73332472946187 0.25990354183138986, -88.73332472946187 -0.033082629448274004, -88.73332472946187 -0.5528897131110454 M-88.73332472946187 0.5528897131110537 C-88.73332472946187 0.2341849349387844, -88.73332472946187 -0.08451984323348494, -88.73332472946187 -0.5528897131110454 M-88.73332472946187 -0.5528897131110454 C-88.70835423580914 -0.9418253075719125, -88.68338374215642 -1.3307609020327795, -88.66247719837367 -1.6563971969074995 M-88.73332472946187 -0.5528897131110454 C-88.71034392799285 -0.9108342457600347, -88.68736312652383 -1.268778778409024, -88.66247719837367 -1.6563971969074995 M-88.66247719837367 -1.6563971969074995 C-88.62233230731378 -1.9677530444625133, -88.58218741625392 -2.2791088920175273, -88.52107326389927 -2.753098189325792 M-88.66247719837367 -1.6563971969074995 C-88.61260147571322 -2.043223452786483, -88.56272575305277 -2.430049708665466, -88.52107326389927 -2.753098189325792 M-88.52107326389927 -2.753098189325792 C-88.45902260672132 -3.0717151995235, -88.39697194954338 -3.3903322097212083, -88.30969398513646 -3.8384861107464197 M-88.52107326389927 -2.753098189325792 C-88.44133803851095 -3.1625217196489634, -88.36160281312263 -3.571945249972135, -88.30969398513646 -3.8384861107464197 M-88.30969398513646 -3.8384861107464197 C-88.2166055727487 -4.193472571954068, -88.12351716036095 -4.548459033161717, -88.0292079648824 -4.908100869385301 M-88.30969398513646 -3.8384861107464197 C-88.23571901434495 -4.120584735329588, -88.16174404355344 -4.402683359912757, -88.0292079648824 -4.908100869385301 M-88.0292079648824 -4.908100869385301 C-87.90834082231092 -5.272133445246647, -87.78747367973945 -5.636166021107992, -87.68076778035837 -5.957547188767545 M-88.0292079648824 -4.908100869385301 C-87.95159341099011 -5.14186353950909, -87.87397885709781 -5.375626209632879, -87.68076778035837 -5.957547188767545 M-87.68076778035837 -5.957547188767545 C-87.58483027201763 -6.194514689194702, -87.4888927636769 -6.4314821896218595, -87.26580524702277 -6.982512668861291 M-87.68076778035837 -5.957547188767545 C-87.55418863085723 -6.270200135276727, -87.4276094813561 -6.582853081785909, -87.26580524702277 -6.982512668861291 M-87.26580524702277 -6.982512668861291 C-87.12128473299634 -7.28261260848078, -86.97676421896993 -7.58271254810027, -86.78602553493425 -7.978785506654402 M-87.26580524702277 -6.982512668861291 C-87.13620443607923 -7.251631525798678, -87.00660362513568 -7.5207503827360656, -86.78602553493425 -7.978785506654402 M-86.78602553493425 -7.978785506654402 C-86.57044634782997 -8.361568183117889, -86.35486716072569 -8.744350859581374, -86.24340016184222 -8.942271803356562 M-86.78602553493425 -7.978785506654402 C-86.67413701601963 -8.177454901928442, -86.562248497105 -8.376124297202482, -86.24340016184222 -8.942271803356562 M-86.24340016184222 -8.942271803356562 C-86.00572260717844 -9.307408352679941, -85.76804505251467 -9.672544902003319, -85.64015889179748 -9.869012387107427 M-86.24340016184222 -8.942271803356562 C-86.04273985853878 -9.250539914066666, -85.84207955523534 -9.558808024776772, -85.64015889179748 -9.869012387107427 M-85.64015889179748 -9.869012387107427 C-85.40871548900834 -10.179125461917124, -85.1772720862192 -10.489238536726821, -84.97878057257351 -10.75519908206315 M-85.64015889179748 -9.869012387107427 C-85.41745619807206 -10.167413708066727, -85.19475350434662 -10.465815029026027, -84.97878057257351 -10.75519908206315 M-84.97878057257351 -10.75519908206315 C-84.74522086061333 -11.02955160965569, -84.51166114865313 -11.303904137248228, -84.2619829495492 -11.597190357007708 M-84.97878057257351 -10.75519908206315 C-84.7646598365516 -11.006717482409531, -84.55053910052968 -11.258235882755912, -84.2619829495492 -11.597190357007708 M-84.2619829495492 -11.597190357007708 C-84.10228700037412 -11.762089535812253, -83.94259105119902 -11.926988714616797, -83.49271149791015 -12.39152628918579 M-84.2619829495492 -11.597190357007708 C-84.07949968101019 -11.785619313929214, -83.89701641247119 -11.97404827085072, -83.49271149791015 -12.39152628918579 M-83.49271149791015 -12.39152628918579 C-83.17569234369967 -12.679434697172574, -82.85867318948918 -12.967343105159356, -82.67412731905937 -13.134942781867558 M-83.49271149791015 -12.39152628918579 C-83.19926597034747 -12.658025753175021, -82.90582044278479 -12.924525217164252, -82.67412731905937 -13.134942781867558 M-82.67412731905937 -13.134942781867558 C-82.47958921628296 -13.290081741955415, -82.28505111350654 -13.445220702043272, -81.80959415097348 -13.824384977222248 M-82.67412731905937 -13.134942781867558 C-82.49253764672974 -13.279755713246306, -82.31094797440012 -13.424568644625053, -81.80959415097348 -13.824384977222248 M-81.80959415097348 -13.824384977222248 C-81.5622321954345 -13.996933969279764, -81.31487023989554 -14.169482961337279, -80.90266454588198 -14.457019809384244 M-81.80959415097348 -13.824384977222248 C-81.53685910054179 -14.014633141893352, -81.2641240501101 -14.204881306564454, -80.90266454588198 -14.457019809384244 M-80.90266454588198 -14.457019809384244 C-80.69781220500198 -14.581202502271674, -80.49295986412199 -14.705385195159106, -79.95706527206792 -15.030247646128466 M-80.90266454588198 -14.457019809384244 C-80.67601557099039 -14.594415749900746, -80.44936659609878 -14.731811690417247, -79.95706527206792 -15.030247646128466 M-79.95706527206792 -15.030247646128466 C-79.62868643166847 -15.201562676828177, -79.30030759126902 -15.372877707527886, -78.97668199977788 -15.541712971316729 M-79.95706527206792 -15.030247646128466 C-79.72574267069082 -15.1509284990977, -79.49442006931373 -15.271609352066937, -78.97668199977788 -15.541712971316729 M-78.97668199977788 -15.541712971316729 C-78.61133391076645 -15.703441732656094, -78.24598582175501 -15.865170493995457, -77.96554333416921 -15.98931406421887 M-78.97668199977788 -15.541712971316729 C-78.7632064628012 -15.636212259009495, -78.54973092582452 -15.730711546702263, -77.96554333416921 -15.98931406421887 M-77.96554333416921 -15.98931406421887 C-77.64281679413509 -16.10808041420286, -77.32009025410098 -16.22684676418685, -76.92780426090746 -16.37121163593403 M-77.96554333416921 -15.98931406421887 C-77.75533584477995 -16.06667236345085, -77.54512835539069 -16.14403066268283, -76.92780426090746 -16.37121163593403 M-76.92780426090746 -16.37121163593403 C-76.65324857957239 -16.452698320982098, -76.37869289823733 -16.534185006030167, -75.86772907243902 -16.68583638742325 M-76.92780426090746 -16.37121163593403 C-76.57584143368946 -16.475672355561755, -76.22387860647146 -16.580133075189476, -75.86772907243902 -16.68583638742325 M-75.86772907243902 -16.68583638742325 C-75.57876721227906 -16.7517900463524, -75.2898053521191 -16.81774370528155, -74.78967384509868 -16.931895458095877 M-75.86772907243902 -16.68583638742325 C-75.55356770138964 -16.757541670270736, -75.23940633034024 -16.829246953118222, -74.78967384509868 -16.931895458095877 M-74.78967384509868 -16.931895458095877 C-74.51162536775459 -16.976848179614723, -74.23357689041049 -17.02180090113357, -73.69806853905774 -17.108377738450994 M-74.78967384509868 -16.931895458095877 C-74.43798153744078 -16.988754342983427, -74.08628922978288 -17.045613227870977, -73.69806853905774 -17.108377738450994 M-73.69806853905774 -17.108377738450994 C-73.36524593665682 -17.14048473462687, -73.03242333425588 -17.172591730802743, -72.5973987946673 -17.2145580249433 M-73.69806853905774 -17.108377738450994 C-73.40248537300869 -17.13689229098898, -73.10690220695963 -17.165406843526963, -72.5973987946673 -17.2145580249433 M-72.5973987946673 -17.2145580249433 C-72.15550909582392 -17.22872856749909, -71.71361939698053 -17.242899110054875, -71.4921875 -17.25 M-72.5973987946673 -17.2145580249433 C-72.1823567916789 -17.227867614148888, -71.7673147886905 -17.241177203354475, -71.4921875 -17.25 M-71.4921875 -17.25 C-71.4921875 -17.25, -71.4921875 -17.25, -71.4921875 -17.25 M-71.4921875 -17.25 C-71.4921875 -17.25, -71.4921875 -17.25, -71.4921875 -17.25" stroke="#a5b4fc" stroke-width="1.3" fill="none" stroke-dasharray="0 0" style="fill:#312e81 !important;stroke:#a5b4fc !important"/></g><g class="label" style="color:#e0e7ff !important;font-size:13px !important" transform="translate(-76.9296875, -9.75)"><rect/><foreignObject width="153.859375" height="19.5"><div style="color: rgb(224, 231, 255) !important; font-size: 13px !important; display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;" xmlns="http://www.w3.org/1999/xhtml"><span style="color:#e0e7ff !important;font-size:13px !important" class="nodeLabel"><p>New On-Air Site Lock Flow</p></span></div></foreignObject></g></g></g></g></g><defs><filter id="my-svg-drop-shadow" height="130%" width="130%"><feDropShadow dx="4" dy="4" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs><defs><filter id="my-svg-drop-shadow-small" height="150%" width="150%"><feDropShadow dx="2" dy="2" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs></svg></figure>
+<blockquote>
+<p>Diagram source: <code>intake_4g_flow.mmd</code> — re-render with
+<code>mmdc -i intake_4g_flow.mmd -o intake_4g_flow.png -b white -s 2</code></p>
+</blockquote>
+<p><strong>In words:</strong> model each file as a table → filter the site table to the <strong>latest-date, On-Air</strong> sites →
+for each, pull its cells from the cell table by <code>SARF ID = Site ID</code> → rename each cell to <code>Sec&lt;CellID&gt;</code> →
+hand the assembled <strong>site + cells</strong> to the New On-Air Site <strong>Lock Flow</strong>.</p>
+<p><strong>Which columns do the work</strong> (every other column is stored as info on the row — see §4/§5):</p>
+<table>
+<thead>
+<tr>
+<th>Role in the flow</th>
+<th>File 1 · 4G On-Air (sheet <code>4G</code>)</th>
+<th>File 2 · ECGI (sheet <code>ECGI</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Filter</strong></td>
+<td><code>Date of Intg</code> (keep latest) · <code>Status</code> (keep <code>On-Air</code>)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>Join key</strong></td>
+<td><code>SARF ID</code></td>
+<td><code>Site ID</code>  <em>(= SARF ID)</em></td>
+</tr>
+<tr>
+<td><strong>Transform</strong></td>
+<td>—</td>
+<td><code>CellID</code> → <code>'Sec' + CellID</code></td>
+</tr>
+<tr>
+<td><strong>Everything else → stored on the row</strong></td>
+<td><code>GC Name, Site Type, Bandwith, Locked status, Donor SARF ID, Phase, …</code></td>
+<td><code>ECGI, PCI, RSI, Azimuth, TAC, DL-EARFCN, Mech/Elec Tilt, Ant Height, Lat/Long, …</code></td>
+</tr>
+</tbody>
+</table>
+<p>So the <strong>4G file decides <em>which</em> sites</strong> (filter + key) and supplies the <strong>site info</strong>; the <strong>ECGI file supplies
+the cells</strong> (keyed back by <code>Site ID</code>) and every per-cell RF field, with <code>CellID</code> reshaped to <code>Sec1/Sec2/…</code>.</p>
+<p><strong>Storage is cell-wise.</strong> The result is stored <strong>one row per cell</strong>: a site with 3 cells → <strong>3 rows</strong>, and
+each row carries that site's 4G info <strong>plus</strong> that cell's ECGI info. (There is no separate "validate" or
+"NE Status" step — the flow is just: filter sites → find their cells → one row per cell.)</p>
+<blockquote>
+<p><strong>Common-column note:</strong> <code>GC Name</code> exists in <strong>both</strong> files and <strong>disagrees for ~11% of sites</strong> (6,377 of
+57,622 — spelling variants like <code>Shimonoishiki</code> vs <code>Shimonoisshiki</code>, and different names like <code>Nagoyaharbor</code>
+vs <code>Nagoyaminato</code>). Since both files land on the same row, keep <strong>both</strong> (<code>gc_name_4g</code>, <code>gc_name_ecgi</code>);
+treat the <strong>4G</strong> value as authoritative for the site. Other same-concept/different-name pairs:
+<code>SARF ID</code>↔<code>Site ID</code>, <code>Bandwith</code>(<code>20Mhz</code>)↔<code>BANDWIDTH</code>(<code>twentyMHz</code>), <code>Status</code>↔<code>NE Status</code>, <code>Site Type</code>↔<code>TYPE</code>.</p>
+</blockquote>
+<hr />
+<h2 id="3-filter-join-transform-rules-grounded-in-the-actual-data">3. Filter / join / transform rules (grounded in the actual data)</h2>
+<h3 id="31-filter-the-site-table-from-4g-sheet">3.1 Filter the site table (from <code>4G</code> sheet)</h3>
+<ol>
+<li><strong>Latest date</strong> — <code>Date of Intg</code> is an <strong>Excel serial</strong> (e.g. <code>46218</code> = 2026-07-15). Keep the sites at
+   the <strong>latest integration date</strong> (the newest on-air batch), not the whole 7-year history.
+   <em>Observed range: 2019-02-03 → 2026-07-15.</em></li>
+<li><strong>On-Air only</strong> — <code>Status</code> == <code>On-Air</code>.
+   <em>Observed Status values: </em><em>On-Air 57,992</em><em>, Decommissioned 1,223, Demand Testing 94, Awaiting Commercial
+   On-Air Date 63, Partial 45.</em><blockquote>
+<p>Note: the header is <code>" Status"</code> with a <strong>leading space</strong> — trim on read.</p>
+</blockquote>
+</li>
+</ol>
+<h3 id="32-join-site-cells">3.2 Join site → cells</h3>
+<ul>
+<li>Key: <strong><code>SARF ID</code></strong> (site table) = <strong><code>Site ID</code></strong> (cell table).</li>
+<li>ECGI is a <strong>superset</strong> (120,225 Site IDs — includes 5G/planned); the join filters it to the 4G sites.</li>
+</ul>
+<h3 id="33-transform-the-cell-id">3.3 Transform the cell id</h3>
+<ul>
+<li>ECGI <code>CellID</code> is a bare integer (<strong>1…18+</strong>, observed). Certification wants <strong><code>Sec&lt;n&gt;</code></strong>:
+  <code>1 → Sec1</code>, <code>2 → Sec2</code>, <code>3 → Sec3</code>, …</li>
+<li><code>cell_id = "Sec" + str(CellID)</code>. Keep the raw number too (<code>cell_id_num</code>) for traceability.</li>
+</ul>
+<h3 id="34-result-stored-cell-wise">3.4 Result — stored cell-wise</h3>
+<p>For each new on-air site, store <strong>one row per cell</strong>: a site with N cells → <strong>N rows</strong>, each row =
+that site's 4G info <strong>+</strong> that cell's ECGI info. That set of rows is the input to the Lock Flow.</p>
+<hr />
+<h2 id="4-data-model-site-from-the-4g-sheet">4. Data model — Site (from the <code>4G</code> sheet)</h2>
+<p><code>ran.ns_site</code> — one row per site. <strong>All 30 real columns</strong> of the <code>4G</code> sheet (the ~15 trailing numeric
+"columns" in the raw sheet are a pivot artifact and are <strong>not</strong> part of the model).</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Source (<code>4G</code> sheet)</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>org_id</code>, <code>workspace_id</code></td>
+<td>—</td>
+<td>text</td>
+<td>tenant scope</td>
+</tr>
+<tr>
+<td><code>sarf_id</code></td>
+<td><code>SARF ID</code></td>
+<td>text</td>
+<td><strong>PK / join key</strong> (= ECGI <code>Site ID</code>)</td>
+</tr>
+<tr>
+<td><code>sr_no</code></td>
+<td><code>Sr.No</code></td>
+<td>int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>gc_name</code></td>
+<td><code>GC Name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>date_of_intg</code></td>
+<td><code>Date of Intg</code></td>
+<td>date</td>
+<td>convert Excel serial → date; <strong>filter col</strong></td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td><code>" Status"</code></td>
+<td>text</td>
+<td>trim leading space; <strong>filter col</strong> (<code>On-Air</code>)</td>
+</tr>
+<tr>
+<td><code>partial_reason</code></td>
+<td><code>Partial Reason</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>pod</code></td>
+<td><code>POD</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>site_type</code></td>
+<td><code>Site Type</code></td>
+<td>text</td>
+<td>RIU / STU / …</td>
+</tr>
+<tr>
+<td><code>rdc_cvim</code></td>
+<td><code>RDC/CVIM</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>roaming</code></td>
+<td><code>Roaming (0) / N Roaming (1)</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>remark</code></td>
+<td><code>Remark</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>mbh</code></td>
+<td><code>MBH</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>partial_to_onair_date</code></td>
+<td><code>Partial to On-Air date</code></td>
+<td>date?</td>
+<td>often <code>-</code></td>
+</tr>
+<tr>
+<td><code>new_1_7ghz</code></td>
+<td><code>New 1.7 GHz</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>decommissioned_date</code></td>
+<td><code>Decommisioned Date</code></td>
+<td>date?</td>
+<td></td>
+</tr>
+<tr>
+<td><code>locked_status</code></td>
+<td><code>Locked status</code></td>
+<td>text</td>
+<td>feeds the Lock Flow</td>
+</tr>
+<tr>
+<td><code>locked_decommissioned_reason</code></td>
+<td><code>Locked / Decommisioned Reason</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>bandwidth</code></td>
+<td><code>Bandwith</code></td>
+<td>text</td>
+<td>e.g. <code>20Mhz</code></td>
+</tr>
+<tr>
+<td><code>hoto_status</code></td>
+<td><code>HOTO Status</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>phase</code></td>
+<td><code>Phase</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>donor_sarf_id</code></td>
+<td><code>Donor SARF ID</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>cell_count</code></td>
+<td><code>Cell count</code></td>
+<td>int</td>
+<td># of cells the site declares</td>
+</tr>
+<tr>
+<td><code>bh_ip</code></td>
+<td><code>BH IP</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>building_type</code></td>
+<td><code>Building-Type</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>rdc</code></td>
+<td><code>RDC</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>coverage_type</code></td>
+<td><code>Coverage Type</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>inventory</code></td>
+<td><code>Inventory</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>b3_uhn</code></td>
+<td><code>B3 UHN</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>onair_to_partial</code></td>
+<td><code>On-Air to Partial</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>commercial_onair_awaited</code></td>
+<td><code>Commercial On_Air date Awaited to On-Air</code></td>
+<td>text</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>PK: <code>(org_id, workspace_id, sarf_id)</code>.</p>
+<hr />
+<h2 id="5-data-model-cell-from-the-ecgi-sheet">5. Data model — Cell (from the <code>ECGI</code> sheet)</h2>
+<p><code>ran.ns_site_cell</code> — one row per cell. <strong>All 42 columns</strong> of the <code>ECGI</code> sheet, plus the derived <code>cell_id</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Source (<code>ECGI</code> sheet)</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>org_id</code>, <code>workspace_id</code></td>
+<td>—</td>
+<td>text</td>
+<td>tenant scope</td>
+</tr>
+<tr>
+<td><code>ecgi</code></td>
+<td><code>ECGI</code></td>
+<td>text</td>
+<td>globally unique cell id — <strong>PK</strong></td>
+</tr>
+<tr>
+<td><code>site_id</code></td>
+<td><code>Site ID</code></td>
+<td>text</td>
+<td><strong>FK → <code>ns_site.sarf_id</code></strong></td>
+</tr>
+<tr>
+<td><code>cell_id_num</code></td>
+<td><code>CellID</code></td>
+<td>int</td>
+<td>raw sector number (1…18+)</td>
+</tr>
+<tr>
+<td><code>cell_id</code></td>
+<td><em>derived</em></td>
+<td>text</td>
+<td><strong><code>'Sec' + CellID</code></strong> (Sec1/Sec2/…)</td>
+</tr>
+<tr>
+<td><code>cell_name</code></td>
+<td><code>Cell Name</code></td>
+<td>text</td>
+<td>e.g. <code>ENA1201000013_RIUD_1_4</code></td>
+</tr>
+<tr>
+<td><code>ne_status</code></td>
+<td><code>NE Status</code></td>
+<td>text</td>
+<td>ONAIR / PLANNED</td>
+</tr>
+<tr>
+<td><code>date_of_onair</code></td>
+<td><code>Date of On Air</code></td>
+<td>date</td>
+<td></td>
+</tr>
+<tr>
+<td><code>enodeb_id</code></td>
+<td><code>enodeBid</code></td>
+<td>bigint</td>
+<td></td>
+</tr>
+<tr>
+<td><code>pci</code></td>
+<td><code>PCI</code></td>
+<td>int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>rsi</code></td>
+<td><code>RSI</code></td>
+<td>int</td>
+<td>root sequence index</td>
+</tr>
+<tr>
+<td><code>azimuth</code></td>
+<td><code>Azimuth</code></td>
+<td>double</td>
+<td>antenna bearing</td>
+</tr>
+<tr>
+<td><code>dl_earfcn</code></td>
+<td><code>DL-EARFCN</code></td>
+<td>int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>bandwidth</code></td>
+<td><code>BANDWIDTH</code></td>
+<td>text</td>
+<td>e.g. <code>twentyMHz</code></td>
+</tr>
+<tr>
+<td><code>tac</code></td>
+<td><code>TAC</code></td>
+<td>int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>mech_antenna_tilt</code></td>
+<td><code>Mech Antenna Tilt</code></td>
+<td>double</td>
+<td></td>
+</tr>
+<tr>
+<td><code>electrical_antenna_tilt</code></td>
+<td><code>Electrical Antenna Tilt</code></td>
+<td>double</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ant_height</code></td>
+<td><code>Ant. Height</code></td>
+<td>double</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ant_name</code></td>
+<td><code>Ant. Name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ant_vendor</code></td>
+<td><code>Ant. Vender</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>latitude</code></td>
+<td><code>Latitude</code></td>
+<td>double</td>
+<td></td>
+</tr>
+<tr>
+<td><code>longitude</code></td>
+<td><code>Longitude</code></td>
+<td>double</td>
+<td></td>
+</tr>
+<tr>
+<td><code>rrh_serial_number</code></td>
+<td><code>RRH_serial number</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>riu_serial_number</code></td>
+<td><code>RIU_serial number</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>riu_number</code></td>
+<td><code>RIU Number</code></td>
+<td>int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>clutter_type</code></td>
+<td><code>Clutter TYPE</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>vdu_name</code></td>
+<td><code>vDU name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>vcu_name</code></td>
+<td><code>vCU name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>vcu_id</code></td>
+<td><code>vCU ID</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>vdu_id</code></td>
+<td><code>vDU ID</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>gc_name</code></td>
+<td><code>GC Name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>gc_code</code></td>
+<td><code>GC Code</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ems_name</code></td>
+<td><code>EMS Name</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>software_build</code></td>
+<td><code>Software Build</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td><code>TYPE</code></td>
+<td>text</td>
+<td>RIUD_RRH / …</td>
+</tr>
+<tr>
+<td><code>cluster</code></td>
+<td><code>Cluster</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>zone</code></td>
+<td><code>Zone</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>city</code></td>
+<td><code>City</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>prefecture</code></td>
+<td><code>Prefecture</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>subregion</code></td>
+<td><code>SubRegion</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>region</code></td>
+<td><code>Region</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>region_manager</code></td>
+<td><code>Region Manager</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>zone_manager</code></td>
+<td><code>Zone Manager</code></td>
+<td>text</td>
+<td></td>
+</tr>
+<tr>
+<td><code>cluster_owner</code></td>
+<td><code>Cluster Owner</code></td>
+<td>text</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>PK: <code>(org_id, workspace_id, ecgi)</code>; index on <code>(org_id, workspace_id, site_id)</code> for the site→cells lookup.</p>
+<p><strong>Relationship:</strong> <code>ns_site (1) ──&lt; ns_site_cell (N)</code> on <code>sarf_id = site_id</code>.</p>
+<hr />
+<h2 id="6-migration-from-the-synthetic-schema">6. Migration from the synthetic schema</h2>
+<p>The old synthetic tables were shaped by the single CSV. The real ECGI cell data is actually <strong>richer</strong>, so
+most old cell fields map cleanly; the site side changes more.</p>
+<table>
+<thead>
+<tr>
+<th>Old (synthetic)</th>
+<th>New source</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ns_site_cell.pci</code></td>
+<td>ECGI <code>PCI</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.root_seq_index</code></td>
+<td>ECGI <code>RSI</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.antenna_bearing</code></td>
+<td>ECGI <code>Azimuth</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.tac</code></td>
+<td>ECGI <code>TAC</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.ret_tilt</code> / <code>mech_tilt</code></td>
+<td>ECGI <code>Electrical</code> / <code>Mech Antenna Tilt</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.latitude/longitude</code></td>
+<td>ECGI <code>Latitude/Longitude</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.cell_name</code></td>
+<td>ECGI <code>Cell Name</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.enb_id</code></td>
+<td>ECGI <code>enodeBid</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.earfcn_dl</code></td>
+<td>ECGI <code>DL-EARFCN</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.height_m</code></td>
+<td>ECGI <code>Ant. Height</code></td>
+<td>✅ direct</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.cell_id</code></td>
+<td><code>'Sec' + ECGI CellID</code></td>
+<td>✅ transform</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.pci_mod3</code></td>
+<td><code>PCI % 3</code></td>
+<td>🔁 derive</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.bandwidth_mhz</code></td>
+<td>parse <code>BANDWIDTH</code> (<code>twentyMHz</code>→20)</td>
+<td>🔁 derive</td>
+</tr>
+<tr>
+<td><code>ns_site_cell.earfcn_ul</code></td>
+<td>—</td>
+<td>❌ ECGI has <strong>DL only</strong></td>
+</tr>
+<tr>
+<td><code>ns_site_cell.max_tx_power</code></td>
+<td>—</td>
+<td>❌ not in ECGI</td>
+</tr>
+<tr>
+<td><code>ns_cluster_site</code> (map geo + bearings)</td>
+<td>ECGI <code>Latitude/Longitude</code> + <code>Azimuth</code></td>
+<td>🔁 fully derivable from ECGI</td>
+</tr>
+<tr>
+<td><code>ns_site.*</code> (planSiteId, siteType New-Coverage/Capacity…)</td>
+<td>4G sheet (<code>SARF ID</code>, <code>Site Type</code>=RIU/STU…)</td>
+<td>⚠️ <strong>redesigned</strong> — different columns &amp; meanings</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Net:</strong> <code>ns_site_cell</code> and <code>ns_cluster_site</code> are largely a <strong>remap</strong> onto ECGI (plus 2 gaps). <code>ns_site</code> is a
+<strong>redesign</strong> to the 4G sheet's columns. <code>ns_workflow</code> / <code>ns_workflow_event</code> (the pipeline state machine) are
+<strong>unaffected</strong> — they key off <code>site_id</code>, which is now <code>SARF ID</code>.</p>
+<p><strong>Old tables to drop/replace:</strong> the synthetic <code>ns_site</code> / <code>ns_site_cell</code> / <code>ns_cluster_site</code> column sets are
+replaced by §4 / §5. Decision to confirm: <strong>redesign in place</strong> (keep the names, swap columns) vs <strong>new
+tables</strong> (<code>ns_site_4g</code> / <code>ns_cell_ecgi</code>) — see open questions.</p>
+<hr />
+<h2 id="7-where-this-fits-workflow_id-airflow">7. Where this fits — <code>workflow_id</code> &amp; Airflow</h2>
+<p>Intake is the <strong>entry point</strong> of the pipeline, so it establishes the two keys every later agent joins on
+(full picture: <code>docs/DATA_MODEL/AGENT_DATA_RELATIONSHIPS.md</code>):</p>
+<ul>
+<li><strong><code>site_id</code></strong> (= <code>SARF ID</code> = ECGI <code>Site ID</code>) — the site <strong>entity</strong>. This is the anchor Fault, Config and
+  KPI-RCA all key back to for the same physical site. <code>cell_id</code> (<code>Sec1/Sec2…</code>) is the shared sub-grain.</li>
+<li><strong><code>workflow_id</code></strong> — Intake <strong>opens one <code>ns_workflow</code> row per new on-air site</strong> and stamps it
+  <code>current_stage = intake · passed</code>. That row is the <strong>thread</strong> the rest of the pipeline advances, and the
+  gate the next stage reads (Fault picks up sites at <code>intake · passed</code>).</li>
+</ul>
+<p><strong>Under Airflow</strong> (the intended governor): Intake is the <strong>first task</strong> of the per-site DAG run, and
+<strong><code>workflow_id</code> = the Airflow DAG run</strong> for that site (store <code>airflow_run_id</code> on <code>ns_workflow</code>). Intake mints
+the site + cells (§4/§5), opens the workflow, and hands off; Airflow then drives Fault → Config → KPI-RCA
+with the state-gated dependencies (park-and-re-trigger). So Intake's job is: <strong>turn the two files into the
+site + cell rows and open the workflow that threads everything downstream.</strong></p>
+<h2 id="8-data-quality-flags-open-questions">8. Data-quality flags &amp; open questions</h2>
+<ol>
+<li><strong>563 On-Air sites are missing from ECGI</strong> (57,992 On-Air → 57,429 matched). How should a site with <strong>no
+   cells</strong> be handled — skip, park, or flag for the client?</li>
+<li><strong>"Latest date" definition</strong> — does it mean sites at <code>max(Date of Intg)</code> exactly, or "on/after the file's
+   cutoff date"? This decides how many sites enter the Lock Flow per cycle.</li>
+<li><strong><code>GC Name</code> conflict</strong> — differs for ~11% of sites between the two files. Confirmed approach: keep both
+   (<code>gc_name_4g</code>, <code>gc_name_ecgi</code>), 4G authoritative. OK, or pick just one?</li>
+<li><strong>Two ECGI gaps</strong> — <code>earfcn_ul</code> and <code>max_tx_power</code> don't exist in ECGI. Are they needed downstream
+   (fault/config/KPI), and if so, from which file?</li>
+<li><strong>Storage shape</strong> — one <strong>cell-wise</strong> table (site info repeated on each cell row), or two tables
+   (site + cell) joined on read? The flow above assumes cell-wise per your note.</li>
+<li><strong>Out of scope now:</strong> 5G intake file, the <code>ACS</code>/<code>Phase_01</code> sheets, and the ECGI <code>Summary.</code> sheet.</li>
+</ol>
+<hr />
+<p><em>Next agents (fault, config, KPI-RCA) will get the same treatment — model from the real client files, then
+map/replace the synthetic schema.</em></p>
+</main></body></html>

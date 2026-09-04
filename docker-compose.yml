@@ -1,0 +1,111 @@
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.10.5-python3.11
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    # Reinstalled on every container start -- simple over fast for a sample project.
+    # Keep this list in sync with requirements.txt by hand; there are only four packages.
+    _PIP_ADDITIONAL_REQUIREMENTS: 'polars>=1.44 fastexcel>=0.21 psycopg2-binary>=2.9 pyyaml>=6.0'
+    # Read by dags/_common.py:get_conn() -- same Postgres instance as Airflow's own
+    # metadata DB, just a different schema (ran.*, created by sql/01_schema.sql).
+    PGHOST: postgres
+    PGPORT: '5432'
+    PGDATABASE: airflow
+    PGUSER: airflow
+    PGPASSWORD: airflow
+    SOURCES_YAML: /opt/airflow/ingestion/sources.yaml
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./ingestion:/opt/airflow/ingestion
+    - "./Fault data:/opt/airflow/data/fault:ro"
+    - "./Intake data:/opt/airflow/data/intake:ro"
+    - airflow-logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      # Exposed for a GUI client (DBeaver / TablePlus / pgAdmin / psql) on the
+      # host: connect to localhost:5432, db "airflow", user/password "airflow".
+      - "5432:5432"
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+      - ./sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Browser-based Postgres admin -- http://localhost:8082, no separate client needed.
+  # Log in with System: PostgreSQL, Server: postgres, Username: airflow,
+  # Password: airflow, Database: airflow.
+  adminer:
+    image: adminer:4
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin --password admin \
+          --firstname Admin --lastname User \
+          --role Admin --email admin@example.com || true
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      # Host port 8081, not 8080: on this machine 127.0.0.1:8080 is already
+      # owned by a local Oracle Database listener (TNSLSNR / Oracle XML DB),
+      # which wins routing for "localhost:8080" ahead of Docker's port-forward.
+      # The container's *internal* port stays 8080 (see the healthcheck below).
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres-db-volume:
+  airflow-logs:

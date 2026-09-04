@@ -1,0 +1,67 @@
+flowchart TB
+    subgraph GT["FILE 1  —  Alarm Vs KPI Impact  (GROUND TRUTH, stored as ran.alarm_vs_kpi)"]
+      direction LR
+      GTa["LOOKUP KEY<br/>Alarm Code"]
+      GTb["FILTER<br/>Technology (4G)"]
+      GTc["DECIDES BLOCK<br/>Flag - Block progress<br/>(YES = blocker)"]
+      GTd["INFO<br/>Perceived Severity, Classification,<br/>KPI impact (Availability, Accessibility, ...)"]
+    end
+
+    subgraph NL["REF FILE  —  Alarm_Equipment_Type.xlsx  (stored as ran.alarm_node_level)"]
+      direction LR
+      NLk["LOOKUP KEY<br/>Equipment Type + Tech"]
+      NLv["NODE LEVEL<br/>site | cell"]
+    end
+
+    subgraph LIVE["FILE 2  —  alarm-monitoring.csv  (LIVE alarms from the fault system)"]
+      direction LR
+      Ltype["LEVEL LOOKUP KEY<br/>Equipment Type + Technology<br/>(LTE = 4G, NR = 5G)"]
+      La["CELL MATCH KEY<br/>Equipment ID"]
+      Lsub["SITE MATCH KEY<br/>Equipment Sub ID<br/>/ENB[id/enbid=280182]/DU[...]/RIU[...]/Radio[...]"]
+      Lb["Alarm Code"]
+      Ld["INFO<br/>Perceived Severity, Status,<br/>Event Time, Service Affected, ..."]
+    end
+
+    subgraph IN["From INTAKE (on-air Gold: site_db WHERE site_id IN intake_site)"]
+      Ia["Cell Name<br/>(one per cell)"]
+      Ienb["enodebid<br/>(one per site)"]
+    end
+
+    %% STEP 1 — level-driven: read the alarm's Equipment Type+Tech, look up node level, match at that level
+    Ltype --> LVL{"STEP 1 · NODE LEVEL ?<br/>look up Equipment Type + Tech<br/>in alarm_node_level"}
+    NLk --> LVL
+    NLv --> LVL
+    LVL -->|"cell"| CELL["CELL MATCH<br/>Equipment ID = on-air Cell Name<br/>(site_db.cell_name)"]
+    Ia --> CELL
+    La --> CELL
+    LVL -->|"site"| SITE["SITE MATCH<br/>parse enbid from Equipment Sub ID<br/>enbid=280182 = on-air enodebid<br/>(site_db.enodebid) - no cell-name search"]
+    Lsub --> SITE
+    Ienb --> SITE
+    LVL -->|"IDSC_COMBO / Femto Cell"| HOLD["ON HOLD<br/>different ID format - awaiting client<br/>(not implemented)"]
+
+    SITE --> RAW["ran.alarm_monitoring_raw<br/>(only alarms matching an on-air site/cell are kept)"]
+    CELL --> RAW
+    RAW --> S2["STEP 2  ·  CLASSIFY EACH ALARM<br/>look up its Alarm Code in Ground Truth<br/>filter Technology = 4G  ->  Severity + Block flag"]
+    GTa --> S2
+    S2 --> DEC{"any active alarm with<br/>Flag - Block progress = YES ?"}
+    DEC -->|"YES"| BLOCK["WORKFLOW BLOCKED<br/>fault not cleared - do not progress<br/>(re-checks until it clears)"]
+    DEC -->|"NO"| SHOW["SHOW ALARMS ON UI<br/>concern, not a blocker<br/>workflow may progress"]
+
+    classDef gt   fill:#3a2a12,stroke:#f59e0b,color:#ffedd5,font-size:13px;
+    classDef nl   fill:#2a1a3a,stroke:#c084fc,color:#f3e8ff,font-size:13px;
+    classDef live fill:#0f2b25,stroke:#2dd4bf,color:#ccfbf1,font-size:13px;
+    classDef intake fill:#1e293b,stroke:#94a3b8,color:#e2e8f0,font-size:13px;
+    classDef step fill:#1e293b,stroke:#94a3b8,color:#e2e8f0,font-size:13px;
+    classDef raw  fill:#0f1f2b,stroke:#38bdf8,color:#e0f2fe,font-size:13px;
+    classDef block fill:#3a1212,stroke:#f87171,color:#fecaca,font-size:13px;
+    classDef ok   fill:#0f2b12,stroke:#4ade80,color:#dcfce7,font-size:13px;
+    classDef hold fill:#2a2a2a,stroke:#9ca3af,color:#d1d5db,font-size:13px,stroke-dasharray:4 3;
+    class GTa,GTb,GTc,GTd gt;
+    class NLk,NLv nl;
+    class Ltype,La,Lsub,Lb,Ld live;
+    class Ia,Ienb intake;
+    class SITE,CELL,S2 step;
+    class RAW raw;
+    class BLOCK block;
+    class SHOW ok;
+    class HOLD hold;
